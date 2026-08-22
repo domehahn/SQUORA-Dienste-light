@@ -1,0 +1,21 @@
+# API-Worker der Dienste-App: besitzt die D1-Datenbank und beantwortet
+# /api/*-Requests. Kein eigenes öffentliches Routing - wird vom Web-Worker
+# (siehe ../wrangler.toml) per Service Binding angesprochen.
+name = "dienste-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "dienste"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "migrations"
+
+[vars]
+FRONTEND_URL = "https://dienste-web.squora.workers.dev"
+
+# JWT_SECRET wird NICHT hier eingetragen, sondern per Secret gesetzt:
+#   wrangler secret put JWT_SECRET
+
+[observability]
+enabled = true
