@@ -43,6 +43,14 @@ export default function Overview() {
     (jugendFilter === "all" ? "Alle Jugenden" : jugenden.find((j) => j.id === jugendFilter)?.name ?? "") +
     (search.trim() ? ` · Suche: „${search.trim()}“` : "");
 
+  // Gesamtzahl je Dienst-Art (und insgesamt) über die gerade angezeigten
+  // Zeilen - bezieht sich auf denselben gefilterten/gesuchten Ausschnitt wie
+  // die Tabelle selbst.
+  const totalByDutyType = Object.fromEntries(
+    usedDutyTypes.map((d) => [d.id, visibleRows.reduce((sum, r) => sum + (r.byDutyType[d.id] ?? 0), 0)])
+  );
+  const grandTotal = visibleRows.reduce((sum, r) => sum + r.total, 0);
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -134,6 +142,17 @@ export default function Overview() {
                 </tr>
               ))}
             </tbody>
+            <tfoot>
+              <tr className="font-semibold">
+                <td className="border border-slate-400 px-2 py-1">Gesamt</td>
+                <td className="border border-slate-400 px-2 py-1">{grandTotal}</td>
+                {usedDutyTypes.map((d) => (
+                  <td key={d.id} className="border border-slate-400 px-2 py-1">
+                    {totalByDutyType[d.id]}
+                  </td>
+                ))}
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
@@ -181,6 +200,19 @@ export default function Overview() {
                 </tr>
               )}
             </tbody>
+            {visibleRows.length > 0 && (
+              <tfoot className="border-t border-slate-200 bg-slate-50 font-semibold text-slate-800 dark:border-slate-800 dark:bg-slate-800/50 dark:text-slate-100">
+                <tr>
+                  <td className="px-4 py-2">Gesamt</td>
+                  <td className="px-4 py-2">{grandTotal}</td>
+                  {usedDutyTypes.map((d) => (
+                    <td key={d.id} className="px-4 py-2">
+                      {totalByDutyType[d.id]}
+                    </td>
+                  ))}
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       )}
