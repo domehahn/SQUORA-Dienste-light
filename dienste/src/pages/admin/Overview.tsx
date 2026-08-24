@@ -30,19 +30,28 @@ export default function Overview() {
   }, []);
 
   const visibleRows = rows.filter((r) => jugendFilter === "all" || r.jugendId === jugendFilter);
+  const filterLabel = jugendFilter === "all" ? "Alle Jugenden" : jugenden.find((j) => j.id === jugendFilter)?.name ?? "";
 
   return (
     <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Übersicht</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400">
-          Wie oft war jedes Elternteil bereits eingeteilt – aufsteigend sortiert, wer am wenigsten Dienste hatte,
-          steht oben. Grundlage für eine faire Verteilung, auch bei manueller Zuteilung.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Übersicht</h2>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            Wie oft war jedes Elternteil bereits eingeteilt – aufsteigend sortiert, wer am wenigsten Dienste hatte,
+            steht oben. Grundlage für eine faire Verteilung, auch bei manueller Zuteilung.
+          </p>
+        </div>
+        <button
+          onClick={() => window.print()}
+          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 print:hidden"
+        >
+          🖨️ Übersicht drucken
+        </button>
       </div>
 
       {jugenden.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1 print:hidden">
           <button
             onClick={() => setJugendFilter("all")}
             className={`rounded-md px-3 py-1.5 text-sm font-medium ${
@@ -69,11 +78,51 @@ export default function Overview() {
         </div>
       )}
 
-      {error && <p className="text-sm text-red-600 dark:text-red-400">Fehler: {error}</p>}
+      {error && <p className="text-sm text-red-600 dark:text-red-400 print:hidden">Fehler: {error}</p>}
+
+      {/* Nur beim Drucken sichtbar: schlanke, immer helle Tabelle (unabhängig
+          vom Darkmode - sonst wäre der Text auf Papier unlesbar) mit Kontext
+          (aktiver Jugend-Filter), da auf Papier keine Überschrift/Filter mehr
+          sichtbar sind. */}
+      {!loading && visibleRows.length > 0 && (
+        <div className="hidden print:block">
+          <h3 className="mb-2 font-semibold text-slate-900">Übersicht – {filterLabel}</h3>
+          <table className="w-full border-collapse text-sm">
+            <thead>
+              <tr>
+                <th className="border border-slate-400 px-2 py-1 text-left">Elternteil</th>
+                <th className="border border-slate-400 px-2 py-1 text-left">Gesamt</th>
+                {dutyTypes.map((d) => (
+                  <th key={d.id} className="border border-slate-400 px-2 py-1 text-left">
+                    {d.name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {visibleRows.map((r) => (
+                <tr key={r.parentId}>
+                  <td className="border border-slate-400 px-2 py-1">
+                    {r.parentName}
+                    {!r.active ? " (inaktiv)" : ""}
+                  </td>
+                  <td className="border border-slate-400 px-2 py-1">{r.total}</td>
+                  {dutyTypes.map((d) => (
+                    <td key={d.id} className="border border-slate-400 px-2 py-1">
+                      {r.byDutyType[d.id] ?? 0}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-sm text-slate-500 dark:text-slate-400">Lädt…</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 print:hidden">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
               <tr>
