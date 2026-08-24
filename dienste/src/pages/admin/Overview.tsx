@@ -1,22 +1,26 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
-import type { DutyType, FairnessRow } from "../../lib/types";
+import type { DutyType, FairnessRow, Jugend } from "../../lib/types";
 
 export default function Overview() {
   const [rows, setRows] = useState<FairnessRow[]>([]);
   const [dutyTypes, setDutyTypes] = useState<DutyType[]>([]);
+  const [jugenden, setJugenden] = useState<Jugend[]>([]);
+  const [jugendFilter, setJugendFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const [fairness, types] = await Promise.all([
+        const [fairness, types, j] = await Promise.all([
           api.get<FairnessRow[]>("/api/fairness"),
           api.get<DutyType[]>("/api/duty-types"),
+          api.get<Jugend[]>("/api/jugenden"),
         ]);
         setRows(fairness.sort((a, b) => a.total - b.total));
         setDutyTypes(types);
+        setJugenden(j);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Fehler beim Laden");
       } finally {
@@ -24,6 +28,8 @@ export default function Overview() {
       }
     })();
   }, []);
+
+  const visibleRows = rows.filter((r) => jugendFilter === "all" || r.jugendId === jugendFilter);
 
   return (
     <div className="space-y-6">
@@ -34,6 +40,34 @@ export default function Overview() {
           steht oben. Grundlage für eine faire Verteilung, auch bei manueller Zuteilung.
         </p>
       </div>
+
+      {jugenden.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <button
+            onClick={() => setJugendFilter("all")}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+              jugendFilter === "all"
+                ? "bg-blue-600 text-white"
+                : "border border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            }`}
+          >
+            Alle Jugenden
+          </button>
+          {jugenden.map((j) => (
+            <button
+              key={j.id}
+              onClick={() => setJugendFilter(j.id)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                jugendFilter === j.id
+                  ? "bg-blue-600 text-white"
+                  : "border border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              }`}
+            >
+              {j.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">Fehler: {error}</p>}
       {loading ? (
@@ -53,7 +87,7 @@ export default function Overview() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {visibleRows.map((r) => (
                 <tr key={r.parentId} className="border-t border-slate-100 dark:border-slate-800">
                   <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-100">
                     {r.parentName}
@@ -71,7 +105,7 @@ export default function Overview() {
                   ))}
                 </tr>
               ))}
-              {rows.length === 0 && (
+              {visibleRows.length === 0 && (
                 <tr>
                   <td colSpan={2 + dutyTypes.length} className="px-4 py-6 text-center text-slate-400 dark:text-slate-500">
                     Noch keine Eltern angelegt.

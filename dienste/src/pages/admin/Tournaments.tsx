@@ -1,10 +1,19 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
-import { TOURNAMENT_TYPE_LABELS, type Tournament, type TournamentType } from "../../lib/types";
+import { useAuth } from "../../context/useAuth";
+import { TOURNAMENT_TYPE_LABELS, type Jugend, type Tournament, type TournamentType } from "../../lib/types";
 import { FloatingInput, FloatingSelect } from "../../components/FloatingField";
 
-const EMPTY = { name: "", type: "home" as TournamentType, eventDate: "", location: "", notes: "" };
+const EMPTY = {
+  name: "",
+  type: "home" as TournamentType,
+  eventDate: "",
+  eventTime: "",
+  location: "",
+  notes: "",
+  jugendId: "",
+};
 
 function formatDate(iso: string): string {
   const [y, m, d] = iso.split("-");
@@ -12,16 +21,24 @@ function formatDate(iso: string): string {
 }
 
 export default function Tournaments() {
+  const { isAdmin } = useAuth();
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [jugenden, setJugenden] = useState<Jugend[]>([]);
   const [form, setForm] = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [jugendFilter, setJugendFilter] = useState<string>("all");
 
   async function load() {
     setLoading(true);
     try {
-      setTournaments(await api.get<Tournament[]>("/api/tournaments"));
+      const [t, j] = await Promise.all([
+        api.get<Tournament[]>("/api/tournaments"),
+        api.get<Jugend[]>("/api/jugenden"),
+      ]);
+      setTournaments(t);
+      setJugenden(j);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Fehler beim Laden");
     } finally {
@@ -35,7 +52,15 @@ export default function Tournaments() {
 
   function startEdit(t: Tournament) {
     setEditingId(t.id);
-    setForm({ name: t.name, type: t.type, eventDate: t.eventDate, location: t.location ?? "", notes: t.notes ?? "" });
+    setForm({
+      name: t.name,
+      type: t.type,
+      eventDate: t.eventDate,
+      eventTime: t.eventTime ?? "",
+      location: t.location ?? "",
+      notes: t.notes ?? "",
+      jugendId: t.jugendId ?? "",
+    });
   }
 
   function resetForm() {
@@ -51,8 +76,10 @@ export default function Tournaments() {
         name: form.name,
         type: form.type,
         eventDate: form.eventDate,
+        eventTime: form.eventTime || null,
         location: form.location || null,
         notes: form.notes || null,
+        jugendId: form.jugendId || null,
       };
       if (editingId) await api.put(`/api/tournaments/${editingId}`, payload);
       else await api.post("/api/tournaments", payload);
@@ -114,6 +141,12 @@ export default function Tournaments() {
           onChange={(e) => setForm((f) => ({ ...f, eventDate: e.target.value }))}
         />
         <FloatingInput
+          label="Uhrzeit (optional)"
+          type="time"
+          value={form.eventTime}
+          onChange={(e) => setForm((f) => ({ ...f, eventTime: e.target.value }))}
+        />
+        <FloatingInput
           label="Ort (optional)"
           value={form.location}
           onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))}
@@ -125,6 +158,20 @@ export default function Tournaments() {
             onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))}
           />
         </div>
+        <FloatingSelect
+          label={isAdmin ? "Jugend (optional)" : "Jugend"}
+          required={!isAdmin}
+          value={form.jugendId}
+          onChange={(e) => setForm((f) => ({ ...f, jugendId: e.target.value }))}
+        >
+          {isAdmin && <option value="">– keine –</option>}
+          {!isAdmin && <option value="">– auswählen –</option>}
+          {jugenden.map((j) => (
+            <option key={j.id} value={j.id}>
+              {j.name}
+            </option>
+          ))}
+        </FloatingSelect>
         <div className="flex items-end gap-3">
           <button
             type="submit"
@@ -144,6 +191,34 @@ export default function Tournaments() {
         </div>
       </form>
 
+      {jugenden.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          <button
+            onClick={() => setJugendFilter("all")}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+              jugendFilter === "all"
+                ? "bg-blue-600 text-white"
+                : "border border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+            }`}
+          >
+            Alle Jugenden
+          </button>
+          {jugenden.map((j) => (
+            <button
+              key={j.id}
+              onClick={() => setJugendFilter(j.id)}
+              className={`rounded-md px-3 py-1.5 text-sm font-medium ${
+                jugendFilter === j.id
+                  ? "bg-blue-600 text-white"
+                  : "border border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+              }`}
+            >
+              {j.name}
+            </button>
+          ))}
+        </div>
+      )}
+
       {error && <p className="text-sm text-red-600 dark:text-red-400">Fehler: {error}</p>}
       {loading ? (
         <p className="text-sm text-slate-500 dark:text-slate-400">Lädt…</p>
@@ -155,20 +230,27 @@ export default function Tournaments() {
                 <th className="px-4 py-2 font-medium">Datum</th>
                 <th className="px-4 py-2 font-medium">Name</th>
                 <th className="px-4 py-2 font-medium">Art</th>
+                <th className="px-4 py-2 font-medium">Jugend</th>
                 <th className="px-4 py-2 font-medium">Ort</th>
                 <th className="px-4 py-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
-              {tournaments.map((t) => (
+              {tournaments
+                .filter((t) => jugendFilter === "all" || t.jugendId === jugendFilter)
+                .map((t) => (
                 <tr key={t.id} className="border-t border-slate-100 dark:border-slate-800">
-                  <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{formatDate(t.eventDate)}</td>
+                  <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
+                    {formatDate(t.eventDate)}
+                    {t.eventTime ? ` · ${t.eventTime}` : ""}
+                  </td>
                   <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-100">
                     <Link to={`/admin/turniere/${t.id}`} className="hover:underline">
                       {t.name}
                     </Link>
                   </td>
                   <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{TOURNAMENT_TYPE_LABELS[t.type]}</td>
+                  <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{t.jugendName ?? "–"}</td>
                   <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{t.location ?? "–"}</td>
                   <td className="px-4 py-2 text-right">
                     <Link
@@ -194,7 +276,7 @@ export default function Tournaments() {
               ))}
               {tournaments.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-slate-400 dark:text-slate-500">
+                  <td colSpan={6} className="px-4 py-6 text-center text-slate-400 dark:text-slate-500">
                     Noch keine Turniere angelegt.
                   </td>
                 </tr>

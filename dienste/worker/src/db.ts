@@ -4,8 +4,13 @@ import type {
   DutyType,
   DutyTypeRow,
   FairnessRow,
+  Jugend,
+  JugendRow,
   Parent,
   ParentRow,
+  Player,
+  PlayerRow,
+  Role,
   Slot,
   SlotRow,
   SlotWithAssignment,
@@ -14,10 +19,11 @@ import type {
   TournamentRow,
   User,
   UserRow,
+  UserWithJugenden,
 } from "./types";
 
 function rowToUser(row: UserRow): User {
-  return { id: row.id, email: row.email, name: row.name, createdAt: row.created_at };
+  return { id: row.id, email: row.email, name: row.name, role: row.role, createdAt: row.created_at };
 }
 
 function rowToDutyType(row: DutyTypeRow): DutyType {
@@ -30,6 +36,10 @@ function rowToDutyType(row: DutyTypeRow): DutyType {
   };
 }
 
+function playerFullName(firstName: string | null, lastName: string | null): string | null {
+  return firstName && lastName ? `${firstName} ${lastName}` : null;
+}
+
 function rowToParent(row: ParentRow): Parent {
   return {
     id: row.id,
@@ -40,6 +50,23 @@ function rowToParent(row: ParentRow): Parent {
     phone: row.phone,
     notes: row.notes,
     active: row.active === 1,
+    playerId: row.player_id,
+    playerName: playerFullName(row.player_first_name, row.player_last_name),
+    roleLabel: row.role_label,
+    jugendId: row.jugend_id,
+    jugendName: row.jugend_name,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToPlayer(row: PlayerRow): Player {
+  return {
+    id: row.id,
+    firstName: row.first_name,
+    lastName: row.last_name,
+    jugendId: row.jugend_id,
+    jugendName: row.jugend_name,
+    sortOrder: row.sort_order,
     createdAt: row.created_at,
   };
 }
@@ -50,8 +77,20 @@ function rowToTournament(row: TournamentRow): Tournament {
     name: row.name,
     type: row.type,
     eventDate: row.event_date,
+    eventTime: row.event_time,
     location: row.location,
     notes: row.notes,
+    jugendId: row.jugend_id,
+    jugendName: row.jugend_name,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToJugend(row: JugendRow): Jugend {
+  return {
+    id: row.id,
+    name: row.name,
+    sortOrder: row.sort_order,
     createdAt: row.created_at,
   };
 }
@@ -62,6 +101,7 @@ function rowToSlot(row: SlotRow): Slot {
     tournamentId: row.tournament_id,
     dutyTypeId: row.duty_type_id,
     label: row.label,
+    time: row.time,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
   };
@@ -75,12 +115,14 @@ function rowToAssignment(row: AssignmentRow): Assignment {
     parentId: row.parent_id,
     assignedAt: row.assigned_at,
     note: row.note,
+    status: row.status,
   };
 }
 
-export function parentDisplayName(p: { firstName: string; lastName: string; childName?: string | null }): string {
-  const base = `${p.firstName} ${p.lastName}`;
-  return p.childName ? `${base} (${p.childName})` : base;
+export function parentDisplayName(p: { playerName: string | null; roleLabel?: string | null }): string {
+  if (!p.playerName) return "Eltern (kein Spieler zugeordnet)";
+  const base = `Eltern von ${p.playerName}`;
+  return p.roleLabel ? `${base} (${p.roleLabel})` : base;
 }
 
 // --- Nutzer ---------------------------------------------------------------
@@ -92,6 +134,78 @@ export async function getUserByEmail(db: D1Database, email: string): Promise<Use
 export async function getUserById(db: D1Database, id: string): Promise<User | null> {
   const row = await db.prepare("SELECT * FROM users WHERE id = ?").bind(id).first<UserRow>();
   return row ? rowToUser(row) : null;
+}
+
+export async function listTrainerJugendIds(db: D1Database, userId: string): Promise<string[]> {
+  const { results } = await db
+    .prepare("SELECT jugend_id FROM trainer_jugenden WHERE user_id = ?")
+    .bind(userId)
+    .all<{ jugend_id: string }>();
+  return results.map((r) => r.jugend_id);
+}
+
+export async function setTrainerJugenden(db: D1Database, userId: string, jugendIds: string[]): Promise<void> {
+  const statements: D1PreparedStatement[] = [
+    db.prepare("DELETE FROM trainer_jugenden WHERE user_id = ?").bind(userId),
+  ];
+  for (const jugendId of jugendIds) {
+    statements.push(
+      db.prepare("INSERT INTO trainer_jugenden (user_id, jugend_id) VALUES (?, ?)").bind(userId, jugendId)
+    );
+  }
+  await db.batch(statements);
+}
+
+export async function listUsers(db: D1Database): Promise<UserWithJugenden[]> {
+  const { results: userRows } = await db
+    .prepare("SELECT * FROM users ORDER BY email ASC")
+    .all<UserRow>();
+  const { results: assignmentRows } = await db
+    .prepare("SELECT user_id, jugend_id FROM trainer_jugenden")
+    .all<{ user_id: string; jugend_id: string }>();
+  const jugendIdsByUser = new Map<string, string[]>();
+  for (const row of assignmentRows) {
+    const list = jugendIdsByUser.get(row.user_id) ?? [];
+    list.push(row.jugend_id);
+    jugendIdsByUser.set(row.user_id, list);
+  }
+  return userRows.map((row) => ({ ...rowToUser(row), jugendIds: jugendIdsByUser.get(row.id) ?? [] }));
+}
+
+export async function createUser(
+  db: D1Database,
+  input: { email: string; name: string | null; passwordHash: string; passwordSalt: string; role: Role }
+): Promise<User> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      "INSERT INTO users (id, email, name, password_hash, password_salt, role) VALUES (?, ?, ?, ?, ?, ?)"
+    )
+    .bind(id, input.email, input.name, input.passwordHash, input.passwordSalt, input.role)
+    .run();
+  const row = await db.prepare("SELECT * FROM users WHERE id = ?").bind(id).first<UserRow>();
+  return rowToUser(row as UserRow);
+}
+
+export async function updateUser(
+  db: D1Database,
+  id: string,
+  input: { name: string | null; role: Role; passwordHash?: string; passwordSalt?: string }
+): Promise<User | null> {
+  if (input.passwordHash && input.passwordSalt) {
+    await db
+      .prepare("UPDATE users SET name = ?, role = ?, password_hash = ?, password_salt = ? WHERE id = ?")
+      .bind(input.name, input.role, input.passwordHash, input.passwordSalt, id)
+      .run();
+  } else {
+    await db.prepare("UPDATE users SET name = ?, role = ? WHERE id = ?").bind(input.name, input.role, id).run();
+  }
+  const row = await db.prepare("SELECT * FROM users WHERE id = ?").bind(id).first<UserRow>();
+  return row ? rowToUser(row) : null;
+}
+
+export async function deleteUser(db: D1Database, id: string): Promise<void> {
+  await db.prepare("DELETE FROM users WHERE id = ?").bind(id).run();
 }
 
 // --- Dienst-Typen ----------------------------------------------------------
@@ -139,13 +253,141 @@ export async function deleteDutyType(db: D1Database, id: string): Promise<{ ok: 
   return { ok: true, inUse: false };
 }
 
+// --- Jugenden ----------------------------------------------------------------
+
+export async function listJugenden(db: D1Database): Promise<Jugend[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM jugenden ORDER BY sort_order ASC, name ASC")
+    .all<JugendRow>();
+  return results.map(rowToJugend);
+}
+
+export async function createJugend(
+  db: D1Database,
+  input: { name: string; sortOrder: number }
+): Promise<Jugend> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare("INSERT INTO jugenden (id, name, sort_order) VALUES (?, ?, ?)")
+    .bind(id, input.name, input.sortOrder)
+    .run();
+  const row = await db.prepare("SELECT * FROM jugenden WHERE id = ?").bind(id).first<JugendRow>();
+  return rowToJugend(row as JugendRow);
+}
+
+export async function updateJugend(
+  db: D1Database,
+  id: string,
+  input: { name: string; sortOrder: number }
+): Promise<Jugend | null> {
+  await db
+    .prepare("UPDATE jugenden SET name = ?, sort_order = ? WHERE id = ?")
+    .bind(input.name, input.sortOrder, id)
+    .run();
+  const row = await db.prepare("SELECT * FROM jugenden WHERE id = ?").bind(id).first<JugendRow>();
+  return row ? rowToJugend(row) : null;
+}
+
+export async function deleteJugend(db: D1Database, id: string): Promise<{ ok: boolean; inUse: boolean }> {
+  const usedByParent = await db.prepare("SELECT 1 FROM parents WHERE jugend_id = ? LIMIT 1").bind(id).first();
+  if (usedByParent) return { ok: false, inUse: true };
+  const usedByTournament = await db
+    .prepare("SELECT 1 FROM tournaments WHERE jugend_id = ? LIMIT 1")
+    .bind(id)
+    .first();
+  if (usedByTournament) return { ok: false, inUse: true };
+  const usedByPlayer = await db.prepare("SELECT 1 FROM players WHERE jugend_id = ? LIMIT 1").bind(id).first();
+  if (usedByPlayer) return { ok: false, inUse: true };
+  await db.prepare("DELETE FROM jugenden WHERE id = ?").bind(id).run();
+  return { ok: true, inUse: false };
+}
+
+// --- Spieler -------------------------------------------------------------
+
+const PLAYER_SELECT = `SELECT pl.*, j.name as jugend_name FROM players pl LEFT JOIN jugenden j ON j.id = pl.jugend_id`;
+
+export async function listPlayers(db: D1Database): Promise<Player[]> {
+  const { results } = await db
+    .prepare(`${PLAYER_SELECT} ORDER BY pl.sort_order ASC, pl.last_name ASC, pl.first_name ASC`)
+    .all<PlayerRow>();
+  return results.map(rowToPlayer);
+}
+
+export async function getPlayer(db: D1Database, id: string): Promise<Player | null> {
+  const row = await db.prepare(`${PLAYER_SELECT} WHERE pl.id = ?`).bind(id).first<PlayerRow>();
+  return row ? rowToPlayer(row) : null;
+}
+
+export async function createPlayer(
+  db: D1Database,
+  input: { firstName: string; lastName: string; jugendId: string; sortOrder: number }
+): Promise<Player> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare("INSERT INTO players (id, first_name, last_name, jugend_id, sort_order) VALUES (?, ?, ?, ?, ?)")
+    .bind(id, input.firstName, input.lastName, input.jugendId, input.sortOrder)
+    .run();
+  const row = await db.prepare(`${PLAYER_SELECT} WHERE pl.id = ?`).bind(id).first<PlayerRow>();
+  return rowToPlayer(row as PlayerRow);
+}
+
+export async function updatePlayer(
+  db: D1Database,
+  id: string,
+  input: { firstName: string; lastName: string; jugendId: string; sortOrder: number }
+): Promise<Player | null> {
+  await db
+    .prepare("UPDATE players SET first_name = ?, last_name = ?, jugend_id = ?, sort_order = ? WHERE id = ?")
+    .bind(input.firstName, input.lastName, input.jugendId, input.sortOrder, id)
+    .run();
+  const row = await db.prepare(`${PLAYER_SELECT} WHERE pl.id = ?`).bind(id).first<PlayerRow>();
+  return row ? rowToPlayer(row) : null;
+}
+
+export async function deletePlayer(db: D1Database, id: string): Promise<{ ok: boolean; inUse: boolean }> {
+  const used = await db.prepare("SELECT 1 FROM parents WHERE player_id = ? LIMIT 1").bind(id).first();
+  if (used) return { ok: false, inUse: true };
+  await db.prepare("DELETE FROM players WHERE id = ?").bind(id).run();
+  return { ok: true, inUse: false };
+}
+
 // --- Eltern ----------------------------------------------------------------
+
+const PARENT_SELECT = `SELECT
+    p.id as id,
+    p.first_name as first_name,
+    p.last_name as last_name,
+    p.child_name as child_name,
+    p.email as email,
+    p.phone as phone,
+    p.notes as notes,
+    p.active as active,
+    p.player_id as player_id,
+    p.role_label as role_label,
+    p.created_at as created_at,
+    pl.first_name as player_first_name,
+    pl.last_name as player_last_name,
+    pl.jugend_id as jugend_id,
+    j.name as jugend_name
+  FROM parents p
+  LEFT JOIN players pl ON pl.id = p.player_id
+  LEFT JOIN jugenden j ON j.id = pl.jugend_id`;
 
 export async function listParents(db: D1Database): Promise<Parent[]> {
   const { results } = await db
-    .prepare("SELECT * FROM parents ORDER BY last_name ASC, first_name ASC")
+    .prepare(`${PARENT_SELECT} ORDER BY p.last_name ASC, p.first_name ASC`)
     .all<ParentRow>();
   return results.map(rowToParent);
+}
+
+async function getParentRow(db: D1Database, id: string): Promise<ParentRow | null> {
+  const row = await db.prepare(`${PARENT_SELECT} WHERE p.id = ?`).bind(id).first<ParentRow>();
+  return row ?? null;
+}
+
+export async function getParent(db: D1Database, id: string): Promise<Parent | null> {
+  const row = await getParentRow(db, id);
+  return row ? rowToParent(row) : null;
 }
 
 export async function createParent(
@@ -153,30 +395,32 @@ export async function createParent(
   input: {
     firstName: string;
     lastName: string;
-    childName: string | null;
     email: string | null;
     phone: string | null;
     notes: string | null;
     active: boolean;
+    playerId: string;
+    roleLabel: string | null;
   }
 ): Promise<Parent> {
   const id = crypto.randomUUID();
   await db
     .prepare(
-      "INSERT INTO parents (id, first_name, last_name, child_name, email, phone, notes, active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO parents (id, first_name, last_name, email, phone, notes, active, player_id, role_label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
     .bind(
       id,
       input.firstName,
       input.lastName,
-      input.childName,
       input.email,
       input.phone,
       input.notes,
-      input.active ? 1 : 0
+      input.active ? 1 : 0,
+      input.playerId,
+      input.roleLabel
     )
     .run();
-  const row = await db.prepare("SELECT * FROM parents WHERE id = ?").bind(id).first<ParentRow>();
+  const row = await getParentRow(db, id);
   return rowToParent(row as ParentRow);
 }
 
@@ -186,29 +430,31 @@ export async function updateParent(
   input: {
     firstName: string;
     lastName: string;
-    childName: string | null;
     email: string | null;
     phone: string | null;
     notes: string | null;
     active: boolean;
+    playerId: string;
+    roleLabel: string | null;
   }
 ): Promise<Parent | null> {
   await db
     .prepare(
-      "UPDATE parents SET first_name = ?, last_name = ?, child_name = ?, email = ?, phone = ?, notes = ?, active = ? WHERE id = ?"
+      "UPDATE parents SET first_name = ?, last_name = ?, email = ?, phone = ?, notes = ?, active = ?, player_id = ?, role_label = ? WHERE id = ?"
     )
     .bind(
       input.firstName,
       input.lastName,
-      input.childName,
       input.email,
       input.phone,
       input.notes,
       input.active ? 1 : 0,
+      input.playerId,
+      input.roleLabel,
       id
     )
     .run();
-  const row = await db.prepare("SELECT * FROM parents WHERE id = ?").bind(id).first<ParentRow>();
+  const row = await getParentRow(db, id);
   return row ? rowToParent(row) : null;
 }
 
@@ -221,40 +467,67 @@ export async function deleteParent(db: D1Database, id: string): Promise<{ ok: bo
 
 // --- Turniere ----------------------------------------------------------------
 
+const TOURNAMENT_SELECT = `SELECT t.*, j.name as jugend_name FROM tournaments t LEFT JOIN jugenden j ON j.id = t.jugend_id`;
+
 export async function listTournaments(db: D1Database): Promise<Tournament[]> {
   const { results } = await db
-    .prepare("SELECT * FROM tournaments ORDER BY event_date ASC")
+    .prepare(`${TOURNAMENT_SELECT} ORDER BY t.event_date ASC`)
     .all<TournamentRow>();
   return results.map(rowToTournament);
 }
 
 export async function createTournament(
   db: D1Database,
-  input: { name: string; type: string; eventDate: string; location: string | null; notes: string | null }
+  input: {
+    name: string;
+    type: string;
+    eventDate: string;
+    eventTime: string | null;
+    location: string | null;
+    notes: string | null;
+    jugendId: string | null;
+  }
 ): Promise<Tournament> {
   const id = crypto.randomUUID();
   await db
     .prepare(
-      "INSERT INTO tournaments (id, name, type, event_date, location, notes) VALUES (?, ?, ?, ?, ?, ?)"
+      "INSERT INTO tournaments (id, name, type, event_date, event_time, location, notes, jugend_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     )
-    .bind(id, input.name, input.type, input.eventDate, input.location, input.notes)
+    .bind(id, input.name, input.type, input.eventDate, input.eventTime, input.location, input.notes, input.jugendId)
     .run();
-  const row = await db.prepare("SELECT * FROM tournaments WHERE id = ?").bind(id).first<TournamentRow>();
+  const row = await db.prepare(`${TOURNAMENT_SELECT} WHERE t.id = ?`).bind(id).first<TournamentRow>();
   return rowToTournament(row as TournamentRow);
 }
 
 export async function updateTournament(
   db: D1Database,
   id: string,
-  input: { name: string; type: string; eventDate: string; location: string | null; notes: string | null }
+  input: {
+    name: string;
+    type: string;
+    eventDate: string;
+    eventTime: string | null;
+    location: string | null;
+    notes: string | null;
+    jugendId: string | null;
+  }
 ): Promise<Tournament | null> {
   await db
     .prepare(
-      "UPDATE tournaments SET name = ?, type = ?, event_date = ?, location = ?, notes = ? WHERE id = ?"
+      "UPDATE tournaments SET name = ?, type = ?, event_date = ?, event_time = ?, location = ?, notes = ?, jugend_id = ? WHERE id = ?"
     )
-    .bind(input.name, input.type, input.eventDate, input.location, input.notes, id)
+    .bind(
+      input.name,
+      input.type,
+      input.eventDate,
+      input.eventTime,
+      input.location,
+      input.notes,
+      input.jugendId,
+      id
+    )
     .run();
-  const row = await db.prepare("SELECT * FROM tournaments WHERE id = ?").bind(id).first<TournamentRow>();
+  const row = await db.prepare(`${TOURNAMENT_SELECT} WHERE t.id = ?`).bind(id).first<TournamentRow>();
   return row ? rowToTournament(row) : null;
 }
 
@@ -263,20 +536,23 @@ export async function deleteTournament(db: D1Database, id: string): Promise<void
 }
 
 export async function getTournament(db: D1Database, id: string): Promise<Tournament | null> {
-  const row = await db.prepare("SELECT * FROM tournaments WHERE id = ?").bind(id).first<TournamentRow>();
+  const row = await db.prepare(`${TOURNAMENT_SELECT} WHERE t.id = ?`).bind(id).first<TournamentRow>();
   return row ? rowToTournament(row) : null;
 }
 
 interface SlotJoinRow {
   id: string;
   label: string | null;
+  time: string | null;
   sort_order: number;
   duty_type_id: string;
   duty_type_name: string;
   assignment_parent_id: string | null;
-  assignment_first_name: string | null;
-  assignment_last_name: string | null;
-  assignment_child_name: string | null;
+  assignment_player_first_name: string | null;
+  assignment_player_last_name: string | null;
+  assignment_role_label: string | null;
+  assignment_status: "confirmed" | "pending" | null;
+  assignment_note: string | null;
 }
 
 async function slotsWithAssignments(db: D1Database, tournamentId: string): Promise<SlotWithAssignment[]> {
@@ -285,17 +561,21 @@ async function slotsWithAssignments(db: D1Database, tournamentId: string): Promi
       `SELECT
          s.id as id,
          s.label as label,
+         s.time as time,
          s.sort_order as sort_order,
          s.duty_type_id as duty_type_id,
          dt.name as duty_type_name,
          p.id as assignment_parent_id,
-         p.first_name as assignment_first_name,
-         p.last_name as assignment_last_name,
-         p.child_name as assignment_child_name
+         pl.first_name as assignment_player_first_name,
+         pl.last_name as assignment_player_last_name,
+         p.role_label as assignment_role_label,
+         a.status as assignment_status,
+         a.note as assignment_note
        FROM tournament_slots s
        JOIN duty_types dt ON dt.id = s.duty_type_id
        LEFT JOIN assignments a ON a.slot_id = s.id
        LEFT JOIN parents p ON p.id = a.parent_id
+       LEFT JOIN players pl ON pl.id = p.player_id
        WHERE s.tournament_id = ?
        ORDER BY dt.sort_order ASC, s.sort_order ASC`
     )
@@ -305,6 +585,7 @@ async function slotsWithAssignments(db: D1Database, tournamentId: string): Promi
   return results.map((row) => ({
     id: row.id,
     label: row.label,
+    time: row.time,
     sortOrder: row.sort_order,
     dutyTypeId: row.duty_type_id,
     dutyTypeName: row.duty_type_name,
@@ -312,42 +593,58 @@ async function slotsWithAssignments(db: D1Database, tournamentId: string): Promi
       ? {
           parentId: row.assignment_parent_id,
           parentName: parentDisplayName({
-            firstName: row.assignment_first_name as string,
-            lastName: row.assignment_last_name as string,
-            childName: row.assignment_child_name,
+            playerName: playerFullName(row.assignment_player_first_name, row.assignment_player_last_name),
+            roleLabel: row.assignment_role_label,
           }),
+          status: row.assignment_status ?? "confirmed",
+          note: row.assignment_note,
         }
       : null,
   }));
+}
+
+export async function listAvailablePlayerIds(db: D1Database, tournamentId: string): Promise<string[]> {
+  const { results } = await db
+    .prepare("SELECT player_id FROM tournament_players WHERE tournament_id = ?")
+    .bind(tournamentId)
+    .all<{ player_id: string }>();
+  return results.map((r) => r.player_id);
+}
+
+export async function setAvailablePlayers(db: D1Database, tournamentId: string, playerIds: string[]): Promise<void> {
+  const statements: D1PreparedStatement[] = [
+    db.prepare("DELETE FROM tournament_players WHERE tournament_id = ?").bind(tournamentId),
+  ];
+  for (const playerId of playerIds) {
+    statements.push(
+      db
+        .prepare("INSERT INTO tournament_players (tournament_id, player_id) VALUES (?, ?)")
+        .bind(tournamentId, playerId)
+    );
+  }
+  await db.batch(statements);
 }
 
 export async function getTournamentDetail(db: D1Database, id: string): Promise<TournamentDetail | null> {
   const tournament = await getTournament(db, id);
   if (!tournament) return null;
   const slots = await slotsWithAssignments(db, id);
-  return { ...tournament, slots };
-}
-
-export async function listPublicTournaments(db: D1Database): Promise<TournamentDetail[]> {
-  const tournaments = await listTournaments(db);
-  const detailed = await Promise.all(
-    tournaments.map(async (t) => ({ ...t, slots: await slotsWithAssignments(db, t.id) }))
-  );
-  return detailed;
+  const availablePlayerIds = await listAvailablePlayerIds(db, id);
+  return { ...tournament, slots, availablePlayerIds };
 }
 
 // --- Dienst-Slots ------------------------------------------------------------
 
 export async function createSlot(
   db: D1Database,
-  input: { tournamentId: string; dutyTypeId: string; label: string | null; sortOrder: number }
+  input: { tournamentId: string; dutyTypeId: string; label: string | null; time: string | null; sortOrder: number }
 ): Promise<Slot> {
   const id = crypto.randomUUID();
   await db
     .prepare(
-      "INSERT INTO tournament_slots (id, tournament_id, duty_type_id, label, sort_order) VALUES (?, ?, ?, ?, ?)"
+      "INSERT INTO tournament_slots (id, tournament_id, duty_type_id, label, time, sort_order) VALUES (?, ?, ?, ?, ?, ?)"
     )
-    .bind(id, input.tournamentId, input.dutyTypeId, input.label, input.sortOrder)
+    .bind(id, input.tournamentId, input.dutyTypeId, input.label, input.time, input.sortOrder)
     .run();
   const row = await db.prepare("SELECT * FROM tournament_slots WHERE id = ?").bind(id).first<SlotRow>();
   return rowToSlot(row as SlotRow);
@@ -361,11 +658,11 @@ export async function getSlot(db: D1Database, id: string): Promise<Slot | null> 
 export async function updateSlot(
   db: D1Database,
   id: string,
-  input: { dutyTypeId: string; label: string | null; sortOrder: number }
+  input: { dutyTypeId: string; label: string | null; time: string | null; sortOrder: number }
 ): Promise<Slot | null> {
   await db
-    .prepare("UPDATE tournament_slots SET duty_type_id = ?, label = ?, sort_order = ? WHERE id = ?")
-    .bind(input.dutyTypeId, input.label, input.sortOrder, id)
+    .prepare("UPDATE tournament_slots SET duty_type_id = ?, label = ?, time = ?, sort_order = ? WHERE id = ?")
+    .bind(input.dutyTypeId, input.label, input.time, input.sortOrder, id)
     .run();
   const row = await db.prepare("SELECT * FROM tournament_slots WHERE id = ?").bind(id).first<SlotRow>();
   return row ? rowToSlot(row) : null;
@@ -386,8 +683,12 @@ export type AssignResult =
 export async function assignParentToSlot(
   db: D1Database,
   slotId: string,
-  parentId: string
+  parentId: string,
+  opts?: { status?: "confirmed" | "pending"; note?: string | null }
 ): Promise<AssignResult> {
+  const status = opts?.status ?? "confirmed";
+  const note = opts?.note ?? null;
+
   const slot = await db
     .prepare("SELECT * FROM tournament_slots WHERE id = ?")
     .bind(slotId)
@@ -409,11 +710,16 @@ export async function assignParentToSlot(
     .first<AssignmentRow>();
 
   if (existing) {
-    await db.prepare("UPDATE assignments SET parent_id = ? WHERE slot_id = ?").bind(parentId, slotId).run();
+    await db
+      .prepare("UPDATE assignments SET parent_id = ?, status = ?, note = ? WHERE slot_id = ?")
+      .bind(parentId, status, note, slotId)
+      .run();
   } else {
     await db
-      .prepare("INSERT INTO assignments (id, slot_id, tournament_id, parent_id) VALUES (?, ?, ?, ?)")
-      .bind(crypto.randomUUID(), slotId, slot.tournament_id, parentId)
+      .prepare(
+        "INSERT INTO assignments (id, slot_id, tournament_id, parent_id, status, note) VALUES (?, ?, ?, ?, ?, ?)"
+      )
+      .bind(crypto.randomUUID(), slotId, slot.tournament_id, parentId, status, note)
       .run();
   }
   const row = await db
@@ -423,19 +729,36 @@ export async function assignParentToSlot(
   return { ok: true, assignment: rowToAssignment(row as AssignmentRow) };
 }
 
+export async function confirmSlotAssignment(db: D1Database, slotId: string): Promise<{ ok: boolean }> {
+  const result = await db.prepare("UPDATE assignments SET status = 'confirmed' WHERE slot_id = ?").bind(slotId).run();
+  return { ok: (result.meta?.changes ?? 0) > 0 };
+}
+
 export async function unassignSlot(db: D1Database, slotId: string): Promise<void> {
   await db.prepare("DELETE FROM assignments WHERE slot_id = ?").bind(slotId).run();
 }
 
 // --- Fairness / Auslastung ----------------------------------------------------
 
-export async function getFairnessOverview(db: D1Database): Promise<FairnessRow[]> {
-  const parents = await listParents(db);
+export async function getFairnessOverview(
+  db: D1Database,
+  allowedJugendIds?: string[] | null
+): Promise<FairnessRow[]> {
+  const allParents = await listParents(db);
+  const parents = allowedJugendIds
+    ? allParents.filter((p) => p.jugendId !== null && allowedJugendIds.includes(p.jugendId))
+    : allParents;
+  // Ein Dienst zählt erst als "gemacht", wenn das Turnier (mit einem Tag
+  // Puffer) tatsächlich stattgefunden hat - direkt nach der Zuteilung wäre
+  // die Anzeige sonst irreführend (Dienst noch nicht geleistet, ggf. sogar
+  // noch getauscht).
   const { results } = await db
     .prepare(
       `SELECT a.parent_id as parent_id, a.tournament_id as tournament_id, s.duty_type_id as duty_type_id
        FROM assignments a
-       JOIN tournament_slots s ON s.id = a.slot_id`
+       JOIN tournament_slots s ON s.id = a.slot_id
+       JOIN tournaments t ON t.id = a.tournament_id
+       WHERE a.status = 'confirmed' AND date(t.event_date, '+1 day') <= date('now')`
     )
     .all<{ parent_id: string; tournament_id: string; duty_type_id: string }>();
 
@@ -453,6 +776,7 @@ export async function getFairnessOverview(db: D1Database): Promise<FairnessRow[]
       parentId: p.id,
       parentName: parentDisplayName(p),
       active: p.active,
+      jugendId: p.jugendId,
       total: entry.total,
       byDutyType: entry.byDutyType,
     };
@@ -463,6 +787,8 @@ export async function getFairnessOverview(db: D1Database): Promise<FairnessRow[]
  * Verteilt offene Slots eines Turniers fair unter aktiven Eltern:
  * - ein Elternteil wird nie zweimal am selben Turnier eingeteilt
  *   (bereits vergebene Slots blockieren die zugehörigen Eltern),
+ * - ist eine Liste verfügbarer Spieler für das Turnier hinterlegt, kommen
+ *   nur deren Eltern infrage (leere Liste = keine Einschränkung),
  * - unter den verbleibenden Eltern wird zunächst nach der bisherigen
  *   Häufigkeit *dieses* Dienst-Typs sortiert, dann nach der Gesamtzahl
  *   aller bisherigen Dienste, mit zufälligem Losentscheid bei Gleichstand.
@@ -477,7 +803,13 @@ export async function autoAssignTournament(
   const openSlots = detail.slots.filter((s) => !s.assignment);
   if (openSlots.length === 0) return { assigned: 0, unfilled: [] };
 
-  const parents = (await listParents(db)).filter((p) => p.active);
+  const parents = (await listParents(db)).filter(
+    (p) =>
+      p.active &&
+      (!detail.jugendId || p.jugendId === detail.jugendId) &&
+      (detail.availablePlayerIds.length === 0 ||
+        (p.playerId !== null && detail.availablePlayerIds.includes(p.playerId)))
+  );
   const fairness = await getFairnessOverview(db);
   const loadByParent = new Map(fairness.map((f) => [f.parentId, f]));
 
@@ -510,7 +842,14 @@ export async function autoAssignTournament(
     const chosen = scored[0].parent;
     await assignParentToSlot(db, slot.id, chosen.id);
     usedThisTournament.add(chosen.id);
-    const load = loadByParent.get(chosen.id) ?? { parentId: chosen.id, parentName: "", active: true, total: 0, byDutyType: {} };
+    const load = loadByParent.get(chosen.id) ?? {
+      parentId: chosen.id,
+      parentName: "",
+      active: true,
+      jugendId: chosen.jugendId,
+      total: 0,
+      byDutyType: {},
+    };
     load.total += 1;
     load.byDutyType[slot.dutyTypeId] = (load.byDutyType[slot.dutyTypeId] ?? 0) + 1;
     loadByParent.set(chosen.id, load);

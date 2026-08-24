@@ -1,4 +1,5 @@
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const ID_RE = /^[A-Za-z0-9-]{1,64}$/;
 
 export function normalizedEmail(value: unknown): string | undefined {
@@ -37,6 +38,12 @@ export function validDate(value: unknown): string | undefined {
   if (typeof value !== "string" || !DATE_RE.test(value)) return undefined;
   const parsed = new Date(`${value}T00:00:00Z`);
   if (Number.isNaN(parsed.getTime())) return undefined;
+  return value;
+}
+
+export function validTime(value: unknown): string | null | undefined {
+  if (value === null || value === undefined || value === "") return null;
+  if (typeof value !== "string" || !TIME_RE.test(value)) return undefined;
   return value;
 }
 

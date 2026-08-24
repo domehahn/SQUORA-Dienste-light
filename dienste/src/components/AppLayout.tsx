@@ -1,30 +1,29 @@
-import { Link, NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "../context/useAuth";
 import { ThemeToggle } from "./ThemeToggle";
+import SquoraBrand from "./SquoraBrand";
 
 const NAV_ITEMS = [
+  { to: "/admin/jugenden", label: "Jugenden" },
+  { to: "/admin/spieler", label: "Spieler" },
   { to: "/admin/turniere", label: "Turniere" },
   { to: "/admin/eltern", label: "Eltern" },
-  { to: "/admin/dienste", label: "Dienst-Arten" },
+  { to: "/admin/dienste", label: "Dienst-Arten", adminOnly: true },
   { to: "/admin/uebersicht", label: "Übersicht" },
+  { to: "/admin/nutzer", label: "Nutzer", adminOnly: true },
 ];
 
 export function AppLayout() {
-  const { userName, userEmail, signOut } = useAuth();
+  const { userName, userEmail, isAdmin, signOut } = useAuth();
+  const navItems = NAV_ITEMS.filter((item) => !item.adminOnly || isAdmin);
 
   return (
     <div className="min-h-screen">
       <header className="border-b border-slate-200 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">
         <div className="mx-auto max-w-5xl px-4 py-3">
           <div className="flex items-center justify-between gap-3">
-            <span className="text-lg font-semibold text-slate-900 dark:text-slate-100">📋 Dienste</span>
-            <div className="flex items-center gap-2">
-              <Link
-                to="/"
-                className="hidden text-sm text-slate-500 hover:underline dark:text-slate-400 sm:inline"
-              >
-                Öffentliche Ansicht
-              </Link>
+            <SquoraBrand />
+            <div className="flex items-center gap-2 print:hidden">
               <span className="hidden max-w-[10rem] truncate text-sm text-slate-500 dark:text-slate-400 sm:inline">
                 {userName ?? userEmail}
               </span>
@@ -40,8 +39,8 @@ export function AppLayout() {
           {/* Eigene, horizontal scrollbare Zeile statt in der Kopfzeile
               mitzulaufen - sonst laufen auf schmalen Bildschirmen (iPhone)
               Logo, Navigation und Nutzer-Aktionen ineinander. */}
-          <nav className="-mx-4 mt-3 flex gap-1 overflow-x-auto px-4 pb-0.5">
-            {NAV_ITEMS.map((item) => (
+          <nav className="-mx-4 mt-3 flex gap-1 overflow-x-auto px-4 pb-0.5 print:hidden">
+            {navItems.map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}

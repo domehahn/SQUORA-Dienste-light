@@ -1,9 +1,13 @@
 import { createContext } from "react";
+import type { Role } from "../lib/types";
 
 export interface AuthState {
   isAuthenticated: boolean;
   userEmail: string | null;
   userName: string | null;
+  role: Role | null;
+  jugendIds: string[];
+  isAdmin: boolean;
 }
 
 export interface AuthContextValue extends AuthState {

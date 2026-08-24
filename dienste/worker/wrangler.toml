@@ -8,7 +8,7 @@ compatibility_date = "2026-07-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "dienste"
-database_id = "00000000-0000-0000-0000-000000000000"
+database_id = "7ddd11c5-45c8-4a04-9019-9571fe39da73"
 migrations_dir = "migrations"
 
 [vars]

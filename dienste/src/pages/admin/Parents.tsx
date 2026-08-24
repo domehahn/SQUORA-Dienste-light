@@ -1,12 +1,21 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../../lib/api";
-import type { Parent } from "../../lib/types";
-import { FloatingInput } from "../../components/FloatingField";
+import { parentLabel, type Jugend, type Parent, type Player } from "../../lib/types";
+import { FloatingInput, FloatingSelect } from "../../components/FloatingField";
 
-const EMPTY = { firstName: "", lastName: "", childName: "", email: "", phone: "", notes: "", active: true };
+const EMPTY = {
+  playerId: "",
+  roleLabel: "",
+  email: "",
+  phone: "",
+  notes: "",
+  active: true,
+};
 
 export default function Parents() {
   const [parents, setParents] = useState<Parent[]>([]);
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [jugenden, setJugenden] = useState<Jugend[]>([]);
   const [form, setForm] = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -15,7 +24,14 @@ export default function Parents() {
   async function load() {
     setLoading(true);
     try {
-      setParents(await api.get<Parent[]>("/api/parents"));
+      const [p, pl, j] = await Promise.all([
+        api.get<Parent[]>("/api/parents"),
+        api.get<Player[]>("/api/players"),
+        api.get<Jugend[]>("/api/jugenden"),
+      ]);
+      setParents(p);
+      setPlayers(pl);
+      setJugenden(j);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Fehler beim Laden");
     } finally {
@@ -30,9 +46,8 @@ export default function Parents() {
   function startEdit(p: Parent) {
     setEditingId(p.id);
     setForm({
-      firstName: p.firstName,
-      lastName: p.lastName,
-      childName: p.childName ?? "",
+      playerId: p.playerId ?? "",
+      roleLabel: p.roleLabel ?? "",
       email: p.email ?? "",
       phone: p.phone ?? "",
       notes: p.notes ?? "",
@@ -50,9 +65,8 @@ export default function Parents() {
     setError(null);
     try {
       const payload = {
-        firstName: form.firstName,
-        lastName: form.lastName,
-        childName: form.childName || null,
+        playerId: form.playerId,
+        roleLabel: form.roleLabel || null,
         email: form.email || null,
         phone: form.phone || null,
         notes: form.notes || null,
@@ -82,7 +96,9 @@ export default function Parents() {
       <div>
         <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Eltern</h2>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Eltern/Familien, die für Dienste eingeteilt werden. Inaktive Eltern werden bei der automatischen Zuteilung
+          Eltern werden nicht mit eigenem Namen erfasst, sondern über den Spieler identifiziert, dessen Eltern sie
+          sind. Falls beide Elternteile eines Spielers angelegt werden, hilft das optionale Rollenfeld (z.B.
+          „Mutter"/„Vater") bei der Unterscheidung. Inaktive Eltern werden bei der automatischen Zuteilung
           übersprungen.
         </p>
       </div>
@@ -91,22 +107,24 @@ export default function Parents() {
         onSubmit={handleSubmit}
         className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-2 lg:grid-cols-3"
       >
-        <FloatingInput
-          label="Vorname"
+        <FloatingSelect
+          label="Spieler"
           required
-          value={form.firstName}
-          onChange={(e) => setForm((f) => ({ ...f, firstName: e.target.value }))}
-        />
+          value={form.playerId}
+          onChange={(e) => setForm((f) => ({ ...f, playerId: e.target.value }))}
+        >
+          <option value="">– auswählen –</option>
+          {players.map((pl) => (
+            <option key={pl.id} value={pl.id}>
+              {pl.firstName} {pl.lastName}
+              {pl.jugendName ? ` (${pl.jugendName})` : ""}
+            </option>
+          ))}
+        </FloatingSelect>
         <FloatingInput
-          label="Nachname"
-          required
-          value={form.lastName}
-          onChange={(e) => setForm((f) => ({ ...f, lastName: e.target.value }))}
-        />
-        <FloatingInput
-          label="Kind (optional)"
-          value={form.childName}
-          onChange={(e) => setForm((f) => ({ ...f, childName: e.target.value }))}
+          label="Rolle (optional, z.B. Mutter/Vater)"
+          value={form.roleLabel}
+          onChange={(e) => setForm((f) => ({ ...f, roleLabel: e.target.value }))}
         />
         <FloatingInput
           label="E-Mail (optional)"
@@ -155,64 +173,67 @@ export default function Parents() {
       {error && <p className="text-sm text-red-600 dark:text-red-400">Fehler: {error}</p>}
       {loading ? (
         <p className="text-sm text-slate-500 dark:text-slate-400">Lädt…</p>
+      ) : parents.length === 0 ? (
+        <p className="text-sm text-slate-400 dark:text-slate-500">Noch keine Eltern angelegt.</p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-              <tr>
-                <th className="px-4 py-2 font-medium">Name</th>
-                <th className="px-4 py-2 font-medium">Kind</th>
-                <th className="px-4 py-2 font-medium">Kontakt</th>
-                <th className="px-4 py-2 font-medium">Status</th>
-                <th className="px-4 py-2 font-medium"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {parents.map((p) => (
-                <tr key={p.id} className="border-t border-slate-100 dark:border-slate-800">
-                  <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-100">
-                    {p.firstName} {p.lastName}
-                  </td>
-                  <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{p.childName ?? "–"}</td>
-                  <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
-                    {[p.email, p.phone].filter(Boolean).join(" · ") || "–"}
-                  </td>
-                  <td className="px-4 py-2">
-                    {p.active ? (
-                      <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
-                        aktiv
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                        inaktiv
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2 text-right">
-                    <button
-                      onClick={() => startEdit(p)}
-                      className="mr-3 text-sm text-blue-700 hover:underline dark:text-blue-400"
-                    >
-                      Bearbeiten
-                    </button>
-                    <button
-                      onClick={() => handleDelete(p.id)}
-                      className="text-sm text-red-600 hover:underline dark:text-red-400"
-                    >
-                      Löschen
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {parents.length === 0 && (
-                <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-slate-400 dark:text-slate-500">
-                    Noch keine Eltern angelegt.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+        <div className="space-y-6">
+          {[
+            ...jugenden.map((j) => ({ key: j.id, title: j.name, parents: parents.filter((p) => p.jugendId === j.id) })),
+            { key: "ohne-jugend", title: "Ohne Jugend", parents: parents.filter((p) => !p.jugendId) },
+          ]
+            .filter((group) => group.parents.length > 0)
+            .map((group) => (
+              <div key={group.key}>
+                <h3 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-300">{group.title}</h3>
+                <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                      <tr>
+                        <th className="px-4 py-2 font-medium">Name</th>
+                        <th className="px-4 py-2 font-medium">Kontakt</th>
+                        <th className="px-4 py-2 font-medium">Status</th>
+                        <th className="px-4 py-2 font-medium"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.parents.map((p) => (
+                        <tr key={p.id} className="border-t border-slate-100 dark:border-slate-800">
+                          <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-100">{parentLabel(p)}</td>
+                          <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
+                            {[p.email, p.phone].filter(Boolean).join(" · ") || "–"}
+                          </td>
+                          <td className="px-4 py-2">
+                            {p.active ? (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                                aktiv
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                                inaktiv
+                              </span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            <button
+                              onClick={() => startEdit(p)}
+                              className="mr-3 text-sm text-blue-700 hover:underline dark:text-blue-400"
+                            >
+                              Bearbeiten
+                            </button>
+                            <button
+                              onClick={() => handleDelete(p.id)}
+                              className="text-sm text-red-600 hover:underline dark:text-red-400"
+                            >
+                              Löschen
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ))}
         </div>
       )}
     </div>

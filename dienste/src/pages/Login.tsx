@@ -1,8 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { Link, Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/useAuth";
 import { FloatingInput } from "../components/FloatingField";
 import { ThemeToggle } from "../components/ThemeToggle";
+import SquoraBrand from "../components/SquoraBrand";
 
 export default function Login() {
   const { isAuthenticated, signIn } = useAuth();
@@ -35,8 +36,8 @@ export default function Login() {
         onSubmit={handleSubmit}
         className="w-full max-w-sm space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900"
       >
-        <div>
-          <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-100">📋 Dienste</h1>
+        <div className="flex flex-col items-center gap-3 text-center">
+          <SquoraBrand size="lg" layout="stack" />
           <p className="text-sm text-slate-500 dark:text-slate-400">Anmeldung für die Dienstplan-Verwaltung.</p>
         </div>
         <FloatingInput
@@ -63,11 +64,6 @@ export default function Login() {
         >
           {submitting ? "Anmelden…" : "Anmelden"}
         </button>
-        <p className="text-center text-xs text-slate-400 dark:text-slate-500">
-          <Link to="/" className="hover:underline">
-            Zurück zur öffentlichen Ansicht
-          </Link>
-        </p>
       </form>
     </div>
   );
