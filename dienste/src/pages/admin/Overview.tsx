@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import type { DutyType, FairnessRow, Jugend } from "../../lib/types";
+import { FloatingInput } from "../../components/FloatingField";
 
 export default function Overview() {
   const [rows, setRows] = useState<FairnessRow[]>([]);
   const [dutyTypes, setDutyTypes] = useState<DutyType[]>([]);
   const [jugenden, setJugenden] = useState<Jugend[]>([]);
   const [jugendFilter, setJugendFilter] = useState<string>("all");
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,8 +31,17 @@ export default function Overview() {
     })();
   }, []);
 
-  const visibleRows = rows.filter((r) => jugendFilter === "all" || r.jugendId === jugendFilter);
-  const filterLabel = jugendFilter === "all" ? "Alle Jugenden" : jugenden.find((j) => j.id === jugendFilter)?.name ?? "";
+  const jugendFilteredRows = rows.filter((r) => jugendFilter === "all" || r.jugendId === jugendFilter);
+  // Nur Dienst-Arten als Spalten zeigen, die im aktuellen Jugend-Filter auch
+  // tatsächlich schon mal vergeben wurden - sonst wirkt die Tabelle bei
+  // vielen konfigurierten, aber (noch) ungenutzten Dienst-Arten überladen.
+  const usedDutyTypes = dutyTypes.filter((d) => jugendFilteredRows.some((r) => (r.byDutyType[d.id] ?? 0) > 0));
+  const visibleRows = jugendFilteredRows.filter((r) =>
+    r.parentName.toLowerCase().includes(search.trim().toLowerCase())
+  );
+  const filterLabel =
+    (jugendFilter === "all" ? "Alle Jugenden" : jugenden.find((j) => j.id === jugendFilter)?.name ?? "") +
+    (search.trim() ? ` · Suche: „${search.trim()}“` : "");
 
   return (
     <div className="space-y-6">
@@ -78,6 +89,14 @@ export default function Overview() {
         </div>
       )}
 
+      <div className="max-w-xs print:hidden">
+        <FloatingInput
+          label="Elternteil suchen"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+        />
+      </div>
+
       {error && <p className="text-sm text-red-600 dark:text-red-400 print:hidden">Fehler: {error}</p>}
 
       {/* Nur beim Drucken sichtbar: schlanke, immer helle Tabelle (unabhängig
@@ -92,7 +111,7 @@ export default function Overview() {
               <tr>
                 <th className="border border-slate-400 px-2 py-1 text-left">Elternteil</th>
                 <th className="border border-slate-400 px-2 py-1 text-left">Gesamt</th>
-                {dutyTypes.map((d) => (
+                {usedDutyTypes.map((d) => (
                   <th key={d.id} className="border border-slate-400 px-2 py-1 text-left">
                     {d.name}
                   </th>
@@ -107,7 +126,7 @@ export default function Overview() {
                     {!r.active ? " (inaktiv)" : ""}
                   </td>
                   <td className="border border-slate-400 px-2 py-1">{r.total}</td>
-                  {dutyTypes.map((d) => (
+                  {usedDutyTypes.map((d) => (
                     <td key={d.id} className="border border-slate-400 px-2 py-1">
                       {r.byDutyType[d.id] ?? 0}
                     </td>
@@ -128,7 +147,7 @@ export default function Overview() {
               <tr>
                 <th className="px-4 py-2 font-medium">Elternteil</th>
                 <th className="px-4 py-2 font-medium">Gesamt</th>
-                {dutyTypes.map((d) => (
+                {usedDutyTypes.map((d) => (
                   <th key={d.id} className="px-4 py-2 font-medium">
                     {d.name}
                   </th>
@@ -147,7 +166,7 @@ export default function Overview() {
                     )}
                   </td>
                   <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{r.total}</td>
-                  {dutyTypes.map((d) => (
+                  {usedDutyTypes.map((d) => (
                     <td key={d.id} className="px-4 py-2 text-slate-600 dark:text-slate-300">
                       {r.byDutyType[d.id] ?? 0}
                     </td>
@@ -156,8 +175,8 @@ export default function Overview() {
               ))}
               {visibleRows.length === 0 && (
                 <tr>
-                  <td colSpan={2 + dutyTypes.length} className="px-4 py-6 text-center text-slate-400 dark:text-slate-500">
-                    Noch keine Eltern angelegt.
+                  <td colSpan={2 + usedDutyTypes.length} className="px-4 py-6 text-center text-slate-400 dark:text-slate-500">
+                    {search.trim() ? "Kein Elternteil gefunden." : "Noch keine Eltern angelegt."}
                   </td>
                 </tr>
               )}
