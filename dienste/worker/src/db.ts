@@ -9,6 +9,7 @@ import type {
   Jugend,
   JugendRow,
   Parent,
+  ParentAssignmentHistoryEntry,
   ParentRow,
   Player,
   PlayerRow,
@@ -474,6 +475,57 @@ export async function getParent(db: D1Database, id: string): Promise<Parent | nu
   return row ? rowToParent(row) : null;
 }
 
+interface ParentHistoryJoinRow {
+  assignment_id: string;
+  tournament_id: string;
+  tournament_name: string;
+  event_date: string;
+  event_time: string | null;
+  duty_type_name: string;
+  label: string | null;
+  slot_time: string | null;
+  status: "confirmed" | "pending";
+}
+
+export async function getParentAssignmentHistory(
+  db: D1Database,
+  parentId: string
+): Promise<ParentAssignmentHistoryEntry[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT
+         a.id as assignment_id,
+         t.id as tournament_id,
+         t.name as tournament_name,
+         t.event_date as event_date,
+         t.event_time as event_time,
+         dt.name as duty_type_name,
+         s.label as label,
+         s.time as slot_time,
+         a.status as status
+       FROM assignments a
+       JOIN tournament_slots s ON s.id = a.slot_id
+       JOIN tournaments t ON t.id = a.tournament_id
+       JOIN duty_types dt ON dt.id = s.duty_type_id
+       WHERE a.parent_id = ?
+       ORDER BY t.event_date ASC, t.event_time ASC`
+    )
+    .bind(parentId)
+    .all<ParentHistoryJoinRow>();
+
+  return results.map((row) => ({
+    assignmentId: row.assignment_id,
+    tournamentId: row.tournament_id,
+    tournamentName: row.tournament_name,
+    eventDate: row.event_date,
+    eventTime: row.event_time,
+    dutyTypeName: row.duty_type_name,
+    label: row.label,
+    slotTime: row.slot_time,
+    status: row.status,
+  }));
+}
+
 export async function createParent(
   db: D1Database,
   input: {
@@ -820,6 +872,38 @@ export async function confirmSlotAssignment(db: D1Database, slotId: string): Pro
 
 export async function unassignSlot(db: D1Database, slotId: string): Promise<void> {
   await db.prepare("DELETE FROM assignments WHERE slot_id = ?").bind(slotId).run();
+}
+
+export type SwapResult =
+  | { ok: true }
+  | { ok: false; reason: "not_assigned" | "different_tournament" | "same_parent" };
+
+// Tauscht die Zuteilungen zweier Slots desselben Turniers (z.B. Grillen und
+// Bonkasse). Löscht zuerst beide Zuteilungen und legt sie mit vertauschtem
+// Elternteil neu an, statt sie per UPDATE zu überschreiben - sonst würde die
+// UNIQUE(tournament_id, parent_id)-Regel kurzzeitig verletzt (beide Slots
+// hätten für einen Moment dasselbe Elternteil).
+export async function swapSlotAssignments(db: D1Database, slotIdA: string, slotIdB: string): Promise<SwapResult> {
+  const rowA = await db.prepare("SELECT * FROM assignments WHERE slot_id = ?").bind(slotIdA).first<AssignmentRow>();
+  const rowB = await db.prepare("SELECT * FROM assignments WHERE slot_id = ?").bind(slotIdB).first<AssignmentRow>();
+  if (!rowA || !rowB) return { ok: false, reason: "not_assigned" };
+  if (rowA.tournament_id !== rowB.tournament_id) return { ok: false, reason: "different_tournament" };
+  if (rowA.parent_id === rowB.parent_id) return { ok: false, reason: "same_parent" };
+
+  await db.batch([
+    db.prepare("DELETE FROM assignments WHERE id IN (?, ?)").bind(rowA.id, rowB.id),
+    db
+      .prepare(
+        "INSERT INTO assignments (id, slot_id, tournament_id, parent_id, status, note) VALUES (?, ?, ?, ?, 'confirmed', ?)"
+      )
+      .bind(crypto.randomUUID(), slotIdA, rowA.tournament_id, rowB.parent_id, rowB.note),
+    db
+      .prepare(
+        "INSERT INTO assignments (id, slot_id, tournament_id, parent_id, status, note) VALUES (?, ?, ?, ?, 'confirmed', ?)"
+      )
+      .bind(crypto.randomUUID(), slotIdB, rowB.tournament_id, rowA.parent_id, rowA.note),
+  ]);
+  return { ok: true };
 }
 
 // --- Fairness / Auslastung ----------------------------------------------------

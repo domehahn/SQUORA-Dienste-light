@@ -51,6 +51,34 @@ export default function Overview() {
   );
   const grandTotal = visibleRows.reduce((sum, r) => sum + r.total, 0);
 
+  function handleExportCsv() {
+    // Semikolon statt Komma als Trenner (deutsches Excel erwartet das
+    // standardmäßig) + UTF-8-BOM, damit Umlaute in der Elternbezeichnung
+    // korrekt angezeigt werden.
+    function csvField(value: string | number): string {
+      const text = String(value);
+      return /[;"\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }
+    const header = ["Elternteil", "Gesamt", ...usedDutyTypes.map((d) => d.name)];
+    const lines = [
+      header.map(csvField).join(";"),
+      ...visibleRows.map((r) =>
+        [r.parentName + (r.active ? "" : " (inaktiv)"), r.total, ...usedDutyTypes.map((d) => r.byDutyType[d.id] ?? 0)]
+          .map(csvField)
+          .join(";")
+      ),
+      ["Gesamt", grandTotal, ...usedDutyTypes.map((d) => totalByDutyType[d.id])].map(csvField).join(";"),
+    ];
+    const csv = "\uFEFF" + lines.join("\r\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `uebersicht-${jugendFilter === "all" ? "alle" : filterLabel.split(" · ")[0]}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -61,12 +89,20 @@ export default function Overview() {
             steht oben. Grundlage für eine faire Verteilung, auch bei manueller Zuteilung.
           </p>
         </div>
-        <button
-          onClick={() => window.print()}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 print:hidden"
-        >
-          🖨️ Übersicht drucken
-        </button>
+        <div className="flex gap-2 print:hidden">
+          <button
+            onClick={handleExportCsv}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            ⬇️ CSV exportieren
+          </button>
+          <button
+            onClick={() => window.print()}
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            🖨️ Übersicht drucken
+          </button>
+        </div>
       </div>
 
       {jugenden.length > 0 && (

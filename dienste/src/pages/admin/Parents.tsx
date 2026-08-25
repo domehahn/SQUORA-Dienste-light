@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { parentLabel, type Jugend, type Parent, type Player } from "../../lib/types";
 import { FloatingInput, FloatingSelect } from "../../components/FloatingField";
@@ -198,7 +199,11 @@ export default function Parents() {
                     <tbody>
                       {group.parents.map((p) => (
                         <tr key={p.id} className="border-t border-slate-100 dark:border-slate-800">
-                          <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-100">{parentLabel(p)}</td>
+                          <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-100">
+                            <Link to={`/admin/eltern/${p.id}`} className="hover:underline">
+                              {parentLabel(p)}
+                            </Link>
+                          </td>
                           <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
                             {[p.email, p.phone].filter(Boolean).join(" · ") || "–"}
                           </td>

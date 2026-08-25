@@ -176,6 +176,17 @@ export default function TournamentDetail() {
     }
   }
 
+  async function handleSwap(slotIdA: string, slotIdB: string) {
+    if (!slotIdB) return;
+    setError(null);
+    try {
+      await api.put("/api/slots/swap", { slotIdA, slotIdB });
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Fehler beim Tauschen");
+    }
+  }
+
   async function handleAutoAssign() {
     if (!id) return;
     setError(null);
@@ -338,6 +349,10 @@ export default function TournamentDetail() {
                     (fairnessByParent.get(a.id)?.total ?? 0) - (fairnessByParent.get(b.id)?.total ?? 0)
                 );
               const isPending = slot.assignment?.status === "pending";
+              const otherConfirmedSlots = tournament.slots.filter(
+                (s) => s.id !== slot.id && s.assignment?.status === "confirmed"
+              );
+              const canSwap = slot.assignment?.status === "confirmed" && otherConfirmedSlots.length > 0;
               return (
                 <li key={slot.id} className="flex flex-wrap items-center justify-between gap-3 py-2">
                   <div>
@@ -385,6 +400,22 @@ export default function TournamentDetail() {
                         );
                       })}
                     </select>
+                    {canSwap && (
+                      <select
+                        value=""
+                        onChange={(e) => handleSwap(slot.id, e.target.value)}
+                        title="Zuteilung mit einem anderen Slot tauschen"
+                        className="rounded-md border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                      >
+                        <option value="">🔁 Tauschen mit…</option>
+                        {otherConfirmedSlots.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.dutyTypeName}
+                            {s.label ? ` – ${s.label}` : ""} ({s.assignment!.parentName})
+                          </option>
+                        ))}
+                      </select>
+                    )}
                     <button
                       onClick={() => handleDeleteSlot(slot.id)}
                       className="text-sm text-red-600 hover:underline dark:text-red-400"

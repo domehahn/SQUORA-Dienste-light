@@ -232,6 +232,18 @@ export interface TournamentDetail extends Tournament {
   availablePlayerIds: string[];
 }
 
+export interface ParentAssignmentHistoryEntry {
+  assignmentId: string;
+  tournamentId: string;
+  tournamentName: string;
+  eventDate: string;
+  eventTime: string | null;
+  dutyTypeName: string;
+  label: string | null;
+  slotTime: string | null;
+  status: AssignmentStatus;
+}
+
 export interface FairnessRow {
   parentId: string;
   parentName: string;

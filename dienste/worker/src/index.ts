@@ -448,6 +448,15 @@ app.delete("/api/parents/:id", requireAuth, async (c) => {
   return c.body(null, 204);
 });
 
+app.get("/api/parents/:id/history", requireAuth, async (c) => {
+  const id = validId(c.req.param("id"));
+  if (!id) return c.json({ error: "Ungültige ID" }, 400);
+  const parent = await db.getParent(c.env.DB, id);
+  if (!parent) return c.json({ error: "Elternteil nicht gefunden" }, 404);
+  if (!canAccessJugend(c.get("role"), c.get("jugendIds"), parent.jugendId)) return forbiddenJugend(c);
+  return c.json({ parent, history: await db.getParentAssignmentHistory(c.env.DB, id) });
+});
+
 // --- Turniere ------------------------------------------------------------------
 
 app.get("/api/tournaments", requireAuth, async (c) => {
@@ -597,6 +606,34 @@ app.post("/api/tournaments/:id/slots", requireAuth, async (c) => {
 
   const slot = await db.createSlot(c.env.DB, { tournamentId, dutyTypeId, label, time, sortOrder });
   return c.json(slot, 201);
+});
+
+// Tauscht die Zuteilungen zweier Slots desselben Turniers (z.B. Grillen und
+// Bonkasse gegenseitig). Beide Slots müssen bereits zugeteilt sein. Muss VOR
+// "/api/slots/:id" registriert sein, sonst matcht der Parameter-Handler
+// zuerst und interpretiert "swap" als Slot-ID.
+app.put("/api/slots/swap", requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const slotIdA = validId(body?.slotIdA);
+  const slotIdB = validId(body?.slotIdB);
+  if (!slotIdA || !slotIdB) return c.json({ error: "Ungültige Slot-IDs" }, 400);
+  if (slotIdA === slotIdB) return c.json({ error: "Ein Slot kann nicht mit sich selbst getauscht werden" }, 400);
+
+  const tournament = await getTournamentForSlot(c.env.DB, slotIdA);
+  if (!tournament) return c.json({ error: "Dienst-Slot nicht gefunden" }, 404);
+  if (!canAccessJugend(c.get("role"), c.get("jugendIds"), tournament.jugendId)) return forbiddenJugend(c);
+
+  const result = await db.swapSlotAssignments(c.env.DB, slotIdA, slotIdB);
+  if (!result.ok) {
+    if (result.reason === "not_assigned") {
+      return c.json({ error: "Beide Slots müssen bereits zugeteilt sein, um zu tauschen" }, 409);
+    }
+    if (result.reason === "different_tournament") {
+      return c.json({ error: "Ein Tausch ist nur innerhalb desselben Turniers möglich" }, 400);
+    }
+    return c.json({ error: "Diese Slots sind bereits demselben Elternteil zugeteilt" }, 409);
+  }
+  return c.json({ ok: true });
 });
 
 app.put("/api/slots/:id", requireAuth, async (c) => {

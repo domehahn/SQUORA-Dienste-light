@@ -7,6 +7,7 @@ import Jugenden from "./pages/admin/Jugenden";
 import Players from "./pages/admin/Players";
 import DutyTypes from "./pages/admin/DutyTypes";
 import Parents from "./pages/admin/Parents";
+import ParentDetail from "./pages/admin/ParentDetail";
 import Tournaments from "./pages/admin/Tournaments";
 import TournamentDetail from "./pages/admin/TournamentDetail";
 import Overview from "./pages/admin/Overview";
@@ -29,6 +30,7 @@ export default function App() {
               <Route path="turniere" element={<Tournaments />} />
               <Route path="turniere/:id" element={<TournamentDetail />} />
               <Route path="eltern" element={<Parents />} />
+              <Route path="eltern/:id" element={<ParentDetail />} />
               <Route path="dienste" element={<DutyTypes />} />
               <Route path="lager" element={<Inventory />} />
               <Route path="uebersicht" element={<Overview />} />
