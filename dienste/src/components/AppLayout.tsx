@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { to: "/admin/turniere", label: "Turniere" },
   { to: "/admin/eltern", label: "Eltern" },
   { to: "/admin/dienste", label: "Dienst-Arten", adminOnly: true },
+  { to: "/admin/lager", label: "Lager" },
   { to: "/admin/uebersicht", label: "Übersicht" },
   { to: "/admin/nutzer", label: "Nutzer", adminOnly: true },
 ];

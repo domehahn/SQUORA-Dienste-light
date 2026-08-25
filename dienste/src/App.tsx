@@ -11,6 +11,7 @@ import Tournaments from "./pages/admin/Tournaments";
 import TournamentDetail from "./pages/admin/TournamentDetail";
 import Overview from "./pages/admin/Overview";
 import Users from "./pages/admin/Users";
+import Inventory from "./pages/admin/Inventory";
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
               <Route path="turniere/:id" element={<TournamentDetail />} />
               <Route path="eltern" element={<Parents />} />
               <Route path="dienste" element={<DutyTypes />} />
+              <Route path="lager" element={<Inventory />} />
               <Route path="uebersicht" element={<Overview />} />
               <Route path="nutzer" element={<Users />} />
             </Route>

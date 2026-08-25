@@ -14,6 +14,8 @@ import {
   validDate,
   validEnum,
   validId,
+  validCount,
+  validOptionalCount,
   validPassword,
   validSortOrder,
   validTime,
@@ -167,6 +169,81 @@ app.delete("/api/duty-types/:id", requireAuth, requireAdmin, async (c) => {
   if (!id) return c.json({ error: "Ungültige ID" }, 400);
   const result = await db.deleteDutyType(c.env.DB, id);
   if (result.inUse) return c.json({ error: "Dienst-Typ wird noch bei Turnieren verwendet" }, 409);
+  return c.body(null, 204);
+});
+
+// --- Lagerbestand --------------------------------------------------------------
+// Geteilt/global wie Dienst-Arten: alle Rollen dürfen lesen, nur Admins pflegen.
+
+app.get("/api/inventory", requireAuth, async (c) => {
+  return c.json(await db.listInventoryItems(c.env.DB));
+});
+
+app.post("/api/inventory", requireAuth, requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const name = requiredText(body?.name, 100);
+  const unit = optionalText(body?.unit, 30);
+  const quantity = validCount(body?.quantity);
+  const minQuantity = validCount(body?.minQuantity);
+  const maxQuantity = validOptionalCount(body?.maxQuantity);
+  const note = optionalText(body?.note, 300);
+  const sortOrder = validSortOrder(body?.sortOrder);
+  if (!name) return c.json({ error: "Name fehlt oder ist ungültig" }, 400);
+  if (unit === undefined) return c.json({ error: "Einheit ist ungültig" }, 400);
+  if (quantity === undefined) return c.json({ error: "Bestand ist ungültig" }, 400);
+  if (minQuantity === undefined) return c.json({ error: "Mindestbestand ist ungültig" }, 400);
+  if (maxQuantity === undefined) return c.json({ error: "Maximalbestand ist ungültig" }, 400);
+  if (note === undefined) return c.json({ error: "Hinweis ist zu lang" }, 400);
+  if (sortOrder === undefined) return c.json({ error: "Sortierung ist ungültig" }, 400);
+
+  const item = await db.createInventoryItem(c.env.DB, {
+    name,
+    unit,
+    quantity,
+    minQuantity,
+    maxQuantity,
+    note,
+    sortOrder,
+  });
+  return c.json(item, 201);
+});
+
+app.put("/api/inventory/:id", requireAuth, requireAdmin, async (c) => {
+  const id = validId(c.req.param("id"));
+  const body = await c.req.json().catch(() => null);
+  const name = requiredText(body?.name, 100);
+  const unit = optionalText(body?.unit, 30);
+  const quantity = validCount(body?.quantity);
+  const minQuantity = validCount(body?.minQuantity);
+  const maxQuantity = validOptionalCount(body?.maxQuantity);
+  const note = optionalText(body?.note, 300);
+  const sortOrder = validSortOrder(body?.sortOrder);
+  if (!id) return c.json({ error: "Ungültige ID" }, 400);
+  if (!name) return c.json({ error: "Name fehlt oder ist ungültig" }, 400);
+  if (unit === undefined) return c.json({ error: "Einheit ist ungültig" }, 400);
+  if (quantity === undefined) return c.json({ error: "Bestand ist ungültig" }, 400);
+  if (minQuantity === undefined) return c.json({ error: "Mindestbestand ist ungültig" }, 400);
+  if (maxQuantity === undefined) return c.json({ error: "Maximalbestand ist ungültig" }, 400);
+  if (note === undefined) return c.json({ error: "Hinweis ist zu lang" }, 400);
+  if (sortOrder === undefined) return c.json({ error: "Sortierung ist ungültig" }, 400);
+
+  const item = await db.updateInventoryItem(c.env.DB, id, {
+    name,
+    unit,
+    quantity,
+    minQuantity,
+    maxQuantity,
+    note,
+    sortOrder,
+  });
+  if (!item) return c.json({ error: "Artikel nicht gefunden" }, 404);
+  return c.json(item);
+});
+
+app.delete("/api/inventory/:id", requireAuth, requireAdmin, async (c) => {
+  const id = validId(c.req.param("id"));
+  if (!id) return c.json({ error: "Ungültige ID" }, 400);
+  await db.deleteInventoryItem(c.env.DB, id);
   return c.body(null, 204);
 });
 

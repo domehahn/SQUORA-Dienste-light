@@ -4,6 +4,8 @@ import type {
   DutyType,
   DutyTypeRow,
   FairnessRow,
+  InventoryItem,
+  InventoryItemRow,
   Jugend,
   JugendRow,
   Parent,
@@ -31,6 +33,20 @@ function rowToDutyType(row: DutyTypeRow): DutyType {
     id: row.id,
     name: row.name,
     appliesTo: row.applies_to,
+    sortOrder: row.sort_order,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToInventoryItem(row: InventoryItemRow): InventoryItem {
+  return {
+    id: row.id,
+    name: row.name,
+    unit: row.unit,
+    quantity: row.quantity,
+    minQuantity: row.min_quantity,
+    maxQuantity: row.max_quantity,
+    note: row.note,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
   };
@@ -251,6 +267,74 @@ export async function deleteDutyType(db: D1Database, id: string): Promise<{ ok: 
   if (used) return { ok: false, inUse: true };
   await db.prepare("DELETE FROM duty_types WHERE id = ?").bind(id).run();
   return { ok: true, inUse: false };
+}
+
+// --- Lagerbestand --------------------------------------------------------------
+
+export async function listInventoryItems(db: D1Database): Promise<InventoryItem[]> {
+  const { results } = await db
+    .prepare("SELECT * FROM inventory_items ORDER BY sort_order ASC, name ASC")
+    .all<InventoryItemRow>();
+  return results.map(rowToInventoryItem);
+}
+
+export async function createInventoryItem(
+  db: D1Database,
+  input: {
+    name: string;
+    unit: string | null;
+    quantity: number;
+    minQuantity: number;
+    maxQuantity: number | null;
+    note: string | null;
+    sortOrder: number;
+  }
+): Promise<InventoryItem> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      "INSERT INTO inventory_items (id, name, unit, quantity, min_quantity, max_quantity, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(id, input.name, input.unit, input.quantity, input.minQuantity, input.maxQuantity, input.note, input.sortOrder)
+    .run();
+  const row = await db.prepare("SELECT * FROM inventory_items WHERE id = ?").bind(id).first<InventoryItemRow>();
+  return rowToInventoryItem(row as InventoryItemRow);
+}
+
+export async function updateInventoryItem(
+  db: D1Database,
+  id: string,
+  input: {
+    name: string;
+    unit: string | null;
+    quantity: number;
+    minQuantity: number;
+    maxQuantity: number | null;
+    note: string | null;
+    sortOrder: number;
+  }
+): Promise<InventoryItem | null> {
+  await db
+    .prepare(
+      "UPDATE inventory_items SET name = ?, unit = ?, quantity = ?, min_quantity = ?, max_quantity = ?, note = ?, sort_order = ? WHERE id = ?"
+    )
+    .bind(
+      input.name,
+      input.unit,
+      input.quantity,
+      input.minQuantity,
+      input.maxQuantity,
+      input.note,
+      input.sortOrder,
+      id
+    )
+    .run();
+  const row = await db.prepare("SELECT * FROM inventory_items WHERE id = ?").bind(id).first<InventoryItemRow>();
+  return row ? rowToInventoryItem(row) : null;
+}
+
+export async function deleteInventoryItem(db: D1Database, id: string): Promise<void> {
+  await db.prepare("DELETE FROM inventory_items WHERE id = ?").bind(id).run();
 }
 
 // --- Jugenden ----------------------------------------------------------------

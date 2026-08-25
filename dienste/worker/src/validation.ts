@@ -63,6 +63,16 @@ export function validSortOrder(value: unknown): number | undefined {
   return value;
 }
 
+export function validCount(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) return undefined;
+  return value;
+}
+
+export function validOptionalCount(value: unknown): number | null | undefined {
+  if (value === null || value === undefined || value === "") return null;
+  return validCount(value);
+}
+
 export function validBool(value: unknown): boolean | undefined {
   if (typeof value !== "boolean") return undefined;
   return value;

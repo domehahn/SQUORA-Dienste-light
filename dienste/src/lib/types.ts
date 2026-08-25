@@ -18,6 +18,28 @@ export interface Jugend {
   createdAt: string;
 }
 
+export interface InventoryItem {
+  id: string;
+  name: string;
+  unit: string | null;
+  quantity: number;
+  minQuantity: number;
+  maxQuantity: number | null;
+  note: string | null;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export type InventoryLevel = "low" | "high" | "ok";
+
+// Bestandsstatus: "low" wenn unter Mindestbestand, "high" wenn ein
+// Maximalbestand gesetzt UND überschritten ist, sonst "ok".
+export function inventoryLevel(item: Pick<InventoryItem, "quantity" | "minQuantity" | "maxQuantity">): InventoryLevel {
+  if (item.quantity < item.minQuantity) return "low";
+  if (item.maxQuantity !== null && item.quantity > item.maxQuantity) return "high";
+  return "ok";
+}
+
 export interface Player {
   id: string;
   firstName: string;

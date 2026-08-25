@@ -31,6 +31,30 @@ export interface UserWithJugenden extends User {
 export type DutyApplicability = "home" | "away" | "both";
 export type TournamentType = "home" | "away";
 
+export interface InventoryItem {
+  id: string;
+  name: string;
+  unit: string | null;
+  quantity: number;
+  minQuantity: number;
+  maxQuantity: number | null;
+  note: string | null;
+  sortOrder: number;
+  createdAt: string;
+}
+
+export interface InventoryItemRow {
+  id: string;
+  name: string;
+  unit: string | null;
+  quantity: number;
+  min_quantity: number;
+  max_quantity: number | null;
+  note: string | null;
+  sort_order: number;
+  created_at: string;
+}
+
 export interface Jugend {
   id: string;
   name: string;
