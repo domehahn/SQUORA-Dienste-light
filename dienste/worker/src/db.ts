@@ -1,6 +1,9 @@
 import type {
   Assignment,
   AssignmentRow,
+  CashTransaction,
+  CashTransactionRow,
+  ClubCashBook,
   DutyType,
   DutyTypeRow,
   FairnessRow,
@@ -18,6 +21,7 @@ import type {
   SlotRow,
   SlotWithAssignment,
   Tournament,
+  TournamentCashBox,
   TournamentDetail,
   TournamentRow,
   User,
@@ -48,7 +52,22 @@ function rowToInventoryItem(row: InventoryItemRow): InventoryItem {
     minQuantity: row.min_quantity,
     maxQuantity: row.max_quantity,
     note: row.note,
+    jugendId: row.jugend_id,
+    jugendName: row.jugend_name,
     sortOrder: row.sort_order,
+    createdAt: row.created_at,
+  };
+}
+
+function rowToCashTransaction(row: CashTransactionRow): CashTransaction {
+  return {
+    id: row.id,
+    tournamentId: row.tournament_id,
+    kind: row.kind,
+    category: row.category,
+    description: row.description,
+    amountCents: row.amount_cents,
+    occurredOn: row.occurred_on,
     createdAt: row.created_at,
   };
 }
@@ -272,11 +291,20 @@ export async function deleteDutyType(db: D1Database, id: string): Promise<{ ok: 
 
 // --- Lagerbestand --------------------------------------------------------------
 
+const INVENTORY_SELECT = `SELECT i.*, j.name as jugend_name
+  FROM inventory_items i
+  LEFT JOIN jugenden j ON j.id = i.jugend_id`;
+
 export async function listInventoryItems(db: D1Database): Promise<InventoryItem[]> {
   const { results } = await db
-    .prepare("SELECT * FROM inventory_items ORDER BY sort_order ASC, name ASC")
+    .prepare(`${INVENTORY_SELECT} ORDER BY j.sort_order ASC, j.name ASC, i.sort_order ASC, i.name ASC`)
     .all<InventoryItemRow>();
   return results.map(rowToInventoryItem);
+}
+
+export async function getInventoryItem(db: D1Database, id: string): Promise<InventoryItem | null> {
+  const row = await db.prepare(`${INVENTORY_SELECT} WHERE i.id = ?`).bind(id).first<InventoryItemRow>();
+  return row ? rowToInventoryItem(row) : null;
 }
 
 export async function createInventoryItem(
@@ -288,17 +316,18 @@ export async function createInventoryItem(
     minQuantity: number;
     maxQuantity: number | null;
     note: string | null;
+    jugendId: string | null;
     sortOrder: number;
   }
 ): Promise<InventoryItem> {
   const id = crypto.randomUUID();
   await db
     .prepare(
-      "INSERT INTO inventory_items (id, name, unit, quantity, min_quantity, max_quantity, note, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO inventory_items (id, name, unit, quantity, min_quantity, max_quantity, note, jugend_id, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
-    .bind(id, input.name, input.unit, input.quantity, input.minQuantity, input.maxQuantity, input.note, input.sortOrder)
+    .bind(id, input.name, input.unit, input.quantity, input.minQuantity, input.maxQuantity, input.note, input.jugendId, input.sortOrder)
     .run();
-  const row = await db.prepare("SELECT * FROM inventory_items WHERE id = ?").bind(id).first<InventoryItemRow>();
+  const row = await db.prepare(`${INVENTORY_SELECT} WHERE i.id = ?`).bind(id).first<InventoryItemRow>();
   return rowToInventoryItem(row as InventoryItemRow);
 }
 
@@ -312,12 +341,13 @@ export async function updateInventoryItem(
     minQuantity: number;
     maxQuantity: number | null;
     note: string | null;
+    jugendId: string | null;
     sortOrder: number;
   }
 ): Promise<InventoryItem | null> {
   await db
     .prepare(
-      "UPDATE inventory_items SET name = ?, unit = ?, quantity = ?, min_quantity = ?, max_quantity = ?, note = ?, sort_order = ? WHERE id = ?"
+      "UPDATE inventory_items SET name = ?, unit = ?, quantity = ?, min_quantity = ?, max_quantity = ?, note = ?, jugend_id = ?, sort_order = ? WHERE id = ?"
     )
     .bind(
       input.name,
@@ -326,16 +356,177 @@ export async function updateInventoryItem(
       input.minQuantity,
       input.maxQuantity,
       input.note,
+      input.jugendId,
       input.sortOrder,
       id
     )
     .run();
-  const row = await db.prepare("SELECT * FROM inventory_items WHERE id = ?").bind(id).first<InventoryItemRow>();
+  const row = await db.prepare(`${INVENTORY_SELECT} WHERE i.id = ?`).bind(id).first<InventoryItemRow>();
   return row ? rowToInventoryItem(row) : null;
 }
 
 export async function deleteInventoryItem(db: D1Database, id: string): Promise<void> {
   await db.prepare("DELETE FROM inventory_items WHERE id = ?").bind(id).run();
+}
+
+// --- Veranstaltungskasse ------------------------------------------------------
+
+export async function getTournamentCashBox(db: D1Database, tournamentId: string): Promise<TournamentCashBox> {
+  const [summary, transactionResult] = await Promise.all([
+    db
+      .prepare(
+        `SELECT
+           COALESCE(cb.opening_balance_cents, 0) as opening_balance_cents,
+           COALESCE(SUM(CASE WHEN ct.kind = 'income' THEN ct.amount_cents ELSE 0 END), 0) as income_cents,
+           COALESCE(SUM(CASE WHEN ct.kind = 'expense' THEN ct.amount_cents ELSE 0 END), 0) as expense_cents
+         FROM tournaments t
+         LEFT JOIN tournament_cash_boxes cb ON cb.tournament_id = t.id
+         LEFT JOIN cash_transactions ct ON ct.tournament_id = t.id
+         WHERE t.id = ?
+         GROUP BY t.id, cb.opening_balance_cents`
+      )
+      .bind(tournamentId)
+      .first<{ opening_balance_cents: number; income_cents: number; expense_cents: number }>(),
+    db
+      .prepare(
+        "SELECT * FROM cash_transactions WHERE tournament_id = ? ORDER BY occurred_on DESC, created_at DESC"
+      )
+      .bind(tournamentId)
+      .all<CashTransactionRow>(),
+  ]);
+
+  const openingBalanceCents = summary?.opening_balance_cents ?? 0;
+  const incomeCents = summary?.income_cents ?? 0;
+  const expenseCents = summary?.expense_cents ?? 0;
+  return {
+    tournamentId,
+    openingBalanceCents,
+    incomeCents,
+    expenseCents,
+    currentBalanceCents: openingBalanceCents + incomeCents - expenseCents,
+    transactions: transactionResult.results.map(rowToCashTransaction),
+  };
+}
+
+export async function setTournamentOpeningBalance(
+  db: D1Database,
+  tournamentId: string,
+  openingBalanceCents: number
+): Promise<TournamentCashBox> {
+  await db
+    .prepare(
+      `INSERT INTO tournament_cash_boxes (tournament_id, opening_balance_cents, updated_at)
+       VALUES (?, ?, datetime('now'))
+       ON CONFLICT(tournament_id) DO UPDATE SET
+         opening_balance_cents = excluded.opening_balance_cents,
+         updated_at = datetime('now')`
+    )
+    .bind(tournamentId, openingBalanceCents)
+    .run();
+  return getTournamentCashBox(db, tournamentId);
+}
+
+export async function getClubCashBook(db: D1Database): Promise<ClubCashBook> {
+  const [boxes, general] = await Promise.all([
+    db
+      .prepare(
+        `SELECT
+           t.id as tournament_id,
+           t.name as tournament_name,
+           t.event_date as event_date,
+           t.jugend_id as jugend_id,
+           j.name as jugend_name,
+           COALESCE(cb.opening_balance_cents, 0) as opening_balance_cents,
+           COALESCE(SUM(CASE WHEN ct.kind = 'income' THEN ct.amount_cents ELSE 0 END), 0) as income_cents,
+           COALESCE(SUM(CASE WHEN ct.kind = 'expense' THEN ct.amount_cents ELSE 0 END), 0) as expense_cents
+         FROM tournaments t
+         LEFT JOIN jugenden j ON j.id = t.jugend_id
+         LEFT JOIN tournament_cash_boxes cb ON cb.tournament_id = t.id
+         LEFT JOIN cash_transactions ct ON ct.tournament_id = t.id
+         WHERE t.type = 'home'
+         GROUP BY t.id
+         ORDER BY t.event_date DESC`
+      )
+      .all<{
+        tournament_id: string;
+        tournament_name: string;
+        event_date: string;
+        jugend_id: string | null;
+        jugend_name: string | null;
+        opening_balance_cents: number;
+        income_cents: number;
+        expense_cents: number;
+      }>(),
+    db
+      .prepare("SELECT * FROM cash_transactions WHERE tournament_id IS NULL ORDER BY occurred_on DESC, created_at DESC")
+      .all<CashTransactionRow>(),
+  ]);
+
+  const tournamentBoxes = boxes.results.map((row) => ({
+    tournamentId: row.tournament_id,
+    tournamentName: row.tournament_name,
+    eventDate: row.event_date,
+    jugendId: row.jugend_id,
+    jugendName: row.jugend_name,
+    currentBalanceCents: row.opening_balance_cents + row.income_cents - row.expense_cents,
+  }));
+
+  const generalTransactions = general.results.map(rowToCashTransaction);
+  const generalIncomeCents = generalTransactions
+    .filter((t) => t.kind === "income")
+    .reduce((sum, t) => sum + t.amountCents, 0);
+  const generalExpenseCents = generalTransactions
+    .filter((t) => t.kind === "expense")
+    .reduce((sum, t) => sum + t.amountCents, 0);
+  const generalBalanceCents = generalIncomeCents - generalExpenseCents;
+
+  return {
+    tournamentBoxes,
+    generalTransactions,
+    generalIncomeCents,
+    generalExpenseCents,
+    generalBalanceCents,
+    totalBalanceCents:
+      tournamentBoxes.reduce((sum, b) => sum + b.currentBalanceCents, 0) + generalBalanceCents,
+  };
+}
+
+export async function createCashTransaction(
+  db: D1Database,
+  input: Omit<CashTransaction, "id" | "createdAt">
+): Promise<CashTransaction> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      "INSERT INTO cash_transactions (id, tournament_id, kind, category, description, amount_cents, occurred_on) VALUES (?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(id, input.tournamentId, input.kind, input.category, input.description, input.amountCents, input.occurredOn)
+    .run();
+  const row = await db.prepare("SELECT * FROM cash_transactions WHERE id = ?").bind(id).first<CashTransactionRow>();
+  return rowToCashTransaction(row as CashTransactionRow);
+}
+
+export async function getCashTransaction(db: D1Database, id: string): Promise<CashTransaction | null> {
+  const row = await db.prepare("SELECT * FROM cash_transactions WHERE id = ?").bind(id).first<CashTransactionRow>();
+  return row ? rowToCashTransaction(row) : null;
+}
+
+export async function updateCashTransaction(
+  db: D1Database,
+  id: string,
+  input: Omit<CashTransaction, "id" | "tournamentId" | "createdAt">
+): Promise<CashTransaction | null> {
+  await db
+    .prepare(
+      "UPDATE cash_transactions SET kind = ?, category = ?, description = ?, amount_cents = ?, occurred_on = ? WHERE id = ?"
+    )
+    .bind(input.kind, input.category, input.description, input.amountCents, input.occurredOn, id)
+    .run();
+  return getCashTransaction(db, id);
+}
+
+export async function deleteCashTransaction(db: D1Database, id: string): Promise<void> {
+  await db.prepare("DELETE FROM cash_transactions WHERE id = ?").bind(id).run();
 }
 
 // --- Jugenden ----------------------------------------------------------------
@@ -383,6 +574,8 @@ export async function deleteJugend(db: D1Database, id: string): Promise<{ ok: bo
   if (usedByTournament) return { ok: false, inUse: true };
   const usedByPlayer = await db.prepare("SELECT 1 FROM players WHERE jugend_id = ? LIMIT 1").bind(id).first();
   if (usedByPlayer) return { ok: false, inUse: true };
+  const usedByInventory = await db.prepare("SELECT 1 FROM inventory_items WHERE jugend_id = ? LIMIT 1").bind(id).first();
+  if (usedByInventory) return { ok: false, inUse: true };
   await db.prepare("DELETE FROM jugenden WHERE id = ?").bind(id).run();
   return { ok: true, inUse: false };
 }

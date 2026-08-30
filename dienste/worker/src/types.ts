@@ -39,6 +39,8 @@ export interface InventoryItem {
   minQuantity: number;
   maxQuantity: number | null;
   note: string | null;
+  jugendId: string | null;
+  jugendName: string | null;
   sortOrder: number;
   createdAt: string;
 }
@@ -51,8 +53,64 @@ export interface InventoryItemRow {
   min_quantity: number;
   max_quantity: number | null;
   note: string | null;
+  jugend_id: string | null;
+  jugend_name: string | null;
   sort_order: number;
   created_at: string;
+}
+
+export type CashTransactionKind = "income" | "expense";
+export type CashTransactionCategory = "sales" | "drinks" | "grill" | "supplies" | "gas" | "equipment" | "other";
+
+export interface CashTransaction {
+  id: string;
+  // null = allgemeine, nicht turniergebundene Buchung (z.B. Anschaffung
+  // Sportgeräte) im vereinsweiten Kassenbuch.
+  tournamentId: string | null;
+  kind: CashTransactionKind;
+  category: CashTransactionCategory;
+  description: string;
+  amountCents: number;
+  occurredOn: string;
+  createdAt: string;
+}
+
+export interface CashTransactionRow {
+  id: string;
+  tournament_id: string | null;
+  kind: CashTransactionKind;
+  category: CashTransactionCategory;
+  description: string;
+  amount_cents: number;
+  occurred_on: string;
+  created_at: string;
+}
+
+export interface TournamentCashBox {
+  tournamentId: string;
+  openingBalanceCents: number;
+  incomeCents: number;
+  expenseCents: number;
+  currentBalanceCents: number;
+  transactions: CashTransaction[];
+}
+
+export interface TournamentCashBoxSummary {
+  tournamentId: string;
+  tournamentName: string;
+  eventDate: string;
+  jugendId: string | null;
+  jugendName: string | null;
+  currentBalanceCents: number;
+}
+
+export interface ClubCashBook {
+  tournamentBoxes: TournamentCashBoxSummary[];
+  generalTransactions: CashTransaction[];
+  generalIncomeCents: number;
+  generalExpenseCents: number;
+  generalBalanceCents: number;
+  totalBalanceCents: number;
 }
 
 export interface Jugend {

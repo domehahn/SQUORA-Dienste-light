@@ -36,6 +36,8 @@ const app = new Hono<AppEnv>();
 
 const APPLIES_TO = ["home", "away", "both"] as const;
 const TOURNAMENT_TYPE = ["home", "away"] as const;
+const CASH_TRANSACTION_KIND = ["income", "expense"] as const;
+const CASH_TRANSACTION_CATEGORY = ["sales", "drinks", "grill", "supplies", "gas", "equipment", "other"] as const;
 const ROLES = ["admin", "trainer"] as const;
 
 app.use("*", async (c, next) =>
@@ -173,13 +175,17 @@ app.delete("/api/duty-types/:id", requireAuth, requireAdmin, async (c) => {
 });
 
 // --- Lagerbestand --------------------------------------------------------------
-// Geteilt/global wie Dienst-Arten: alle Rollen dürfen lesen, nur Admins pflegen.
+// Artikel sind einer Jugend zugeordnet. Vereinsweite Altbestände ohne Jugend
+// bleiben für Admins sichtbar; Trainer pflegen die Bestände ihrer Jugenden.
 
 app.get("/api/inventory", requireAuth, async (c) => {
-  return c.json(await db.listInventoryItems(c.env.DB));
+  const items = await db.listInventoryItems(c.env.DB);
+  return c.json(
+    c.get("role") === "admin" ? items : items.filter((item) => canAccessJugend(c.get("role"), c.get("jugendIds"), item.jugendId))
+  );
 });
 
-app.post("/api/inventory", requireAuth, requireAdmin, async (c) => {
+app.post("/api/inventory", requireAuth, async (c) => {
   const body = await c.req.json().catch(() => null);
   const name = requiredText(body?.name, 100);
   const unit = optionalText(body?.unit, 30);
@@ -187,6 +193,7 @@ app.post("/api/inventory", requireAuth, requireAdmin, async (c) => {
   const minQuantity = validCount(body?.minQuantity);
   const maxQuantity = validOptionalCount(body?.maxQuantity);
   const note = optionalText(body?.note, 300);
+  const jugendId = optionalId(body?.jugendId);
   const sortOrder = validSortOrder(body?.sortOrder);
   if (!name) return c.json({ error: "Name fehlt oder ist ungültig" }, 400);
   if (unit === undefined) return c.json({ error: "Einheit ist ungültig" }, 400);
@@ -194,6 +201,8 @@ app.post("/api/inventory", requireAuth, requireAdmin, async (c) => {
   if (minQuantity === undefined) return c.json({ error: "Mindestbestand ist ungültig" }, 400);
   if (maxQuantity === undefined) return c.json({ error: "Maximalbestand ist ungültig" }, 400);
   if (note === undefined) return c.json({ error: "Hinweis ist zu lang" }, 400);
+  if (jugendId === undefined) return c.json({ error: "Jugend ist ungültig" }, 400);
+  if (!canAccessJugend(c.get("role"), c.get("jugendIds"), jugendId)) return forbiddenJugend(c);
   if (sortOrder === undefined) return c.json({ error: "Sortierung ist ungültig" }, 400);
 
   const item = await db.createInventoryItem(c.env.DB, {
@@ -203,12 +212,13 @@ app.post("/api/inventory", requireAuth, requireAdmin, async (c) => {
     minQuantity,
     maxQuantity,
     note,
+    jugendId,
     sortOrder,
   });
   return c.json(item, 201);
 });
 
-app.put("/api/inventory/:id", requireAuth, requireAdmin, async (c) => {
+app.put("/api/inventory/:id", requireAuth, async (c) => {
   const id = validId(c.req.param("id"));
   const body = await c.req.json().catch(() => null);
   const name = requiredText(body?.name, 100);
@@ -217,6 +227,7 @@ app.put("/api/inventory/:id", requireAuth, requireAdmin, async (c) => {
   const minQuantity = validCount(body?.minQuantity);
   const maxQuantity = validOptionalCount(body?.maxQuantity);
   const note = optionalText(body?.note, 300);
+  const jugendId = optionalId(body?.jugendId);
   const sortOrder = validSortOrder(body?.sortOrder);
   if (!id) return c.json({ error: "Ungültige ID" }, 400);
   if (!name) return c.json({ error: "Name fehlt oder ist ungültig" }, 400);
@@ -225,7 +236,17 @@ app.put("/api/inventory/:id", requireAuth, requireAdmin, async (c) => {
   if (minQuantity === undefined) return c.json({ error: "Mindestbestand ist ungültig" }, 400);
   if (maxQuantity === undefined) return c.json({ error: "Maximalbestand ist ungültig" }, 400);
   if (note === undefined) return c.json({ error: "Hinweis ist zu lang" }, 400);
+  if (jugendId === undefined) return c.json({ error: "Jugend ist ungültig" }, 400);
   if (sortOrder === undefined) return c.json({ error: "Sortierung ist ungültig" }, 400);
+
+  const existing = await db.getInventoryItem(c.env.DB, id);
+  if (!existing) return c.json({ error: "Artikel nicht gefunden" }, 404);
+  if (
+    !canAccessJugend(c.get("role"), c.get("jugendIds"), existing.jugendId) ||
+    !canAccessJugend(c.get("role"), c.get("jugendIds"), jugendId)
+  ) {
+    return forbiddenJugend(c);
+  }
 
   const item = await db.updateInventoryItem(c.env.DB, id, {
     name,
@@ -234,15 +255,19 @@ app.put("/api/inventory/:id", requireAuth, requireAdmin, async (c) => {
     minQuantity,
     maxQuantity,
     note,
+    jugendId,
     sortOrder,
   });
   if (!item) return c.json({ error: "Artikel nicht gefunden" }, 404);
   return c.json(item);
 });
 
-app.delete("/api/inventory/:id", requireAuth, requireAdmin, async (c) => {
+app.delete("/api/inventory/:id", requireAuth, async (c) => {
   const id = validId(c.req.param("id"));
   if (!id) return c.json({ error: "Ungültige ID" }, 400);
+  const item = await db.getInventoryItem(c.env.DB, id);
+  if (!item) return c.json({ error: "Artikel nicht gefunden" }, 404);
+  if (!canAccessJugend(c.get("role"), c.get("jugendIds"), item.jugendId)) return forbiddenJugend(c);
   await db.deleteInventoryItem(c.env.DB, id);
   return c.body(null, 204);
 });
@@ -287,7 +312,7 @@ app.delete("/api/jugenden/:id", requireAuth, requireAdmin, async (c) => {
   const id = validId(c.req.param("id"));
   if (!id) return c.json({ error: "Ungültige ID" }, 400);
   const result = await db.deleteJugend(c.env.DB, id);
-  if (result.inUse) return c.json({ error: "Jugend wird noch von Eltern, Spielern oder Turnieren verwendet" }, 409);
+  if (result.inUse) return c.json({ error: "Jugend wird noch von Eltern, Spielern, Turnieren oder Lagerartikeln verwendet" }, 409);
   return c.body(null, 204);
 });
 
@@ -556,6 +581,148 @@ app.get("/api/tournaments/:id", requireAuth, async (c) => {
   if (!detail) return c.json({ error: "Turnier nicht gefunden" }, 404);
   if (!canAccessJugend(c.get("role"), c.get("jugendIds"), detail.jugendId)) return forbiddenJugend(c);
   return c.json(detail);
+});
+
+// --- Kasse einer Heimveranstaltung --------------------------------------------
+
+app.get("/api/tournaments/:id/cash", requireAuth, async (c) => {
+  const id = validId(c.req.param("id"));
+  if (!id) return c.json({ error: "Ungültige ID" }, 400);
+  const tournament = await db.getTournament(c.env.DB, id);
+  if (!tournament) return c.json({ error: "Turnier nicht gefunden" }, 404);
+  if (!canAccessJugend(c.get("role"), c.get("jugendIds"), tournament.jugendId)) return forbiddenJugend(c);
+  if (tournament.type !== "home") return c.json({ error: "Eine Kasse kann nur für Heimveranstaltungen geführt werden" }, 400);
+  return c.json(await db.getTournamentCashBox(c.env.DB, id));
+});
+
+app.put("/api/tournaments/:id/cash/opening-balance", requireAuth, async (c) => {
+  const id = validId(c.req.param("id"));
+  const body = await c.req.json().catch(() => null);
+  const openingBalanceCents = validCount(body?.openingBalanceCents);
+  if (!id) return c.json({ error: "Ungültige ID" }, 400);
+  if (openingBalanceCents === undefined) return c.json({ error: "Anfangsbestand ist ungültig" }, 400);
+  const tournament = await db.getTournament(c.env.DB, id);
+  if (!tournament) return c.json({ error: "Turnier nicht gefunden" }, 404);
+  if (!canAccessJugend(c.get("role"), c.get("jugendIds"), tournament.jugendId)) return forbiddenJugend(c);
+  if (tournament.type !== "home") return c.json({ error: "Eine Kasse kann nur für Heimveranstaltungen geführt werden" }, 400);
+  return c.json(await db.setTournamentOpeningBalance(c.env.DB, id, openingBalanceCents));
+});
+
+app.post("/api/tournaments/:id/cash/transactions", requireAuth, async (c) => {
+  const tournamentId = validId(c.req.param("id"));
+  const body = await c.req.json().catch(() => null);
+  const kind = validEnum(body?.kind, CASH_TRANSACTION_KIND);
+  const category = validEnum(body?.category, CASH_TRANSACTION_CATEGORY);
+  const description = requiredText(body?.description, 150);
+  const amountCents = validCount(body?.amountCents);
+  const occurredOn = validDate(body?.occurredOn);
+  if (!tournamentId) return c.json({ error: "Ungültige ID" }, 400);
+  if (!kind) return c.json({ error: "Buchungsart ist ungültig" }, 400);
+  if (!category) return c.json({ error: "Kategorie ist ungültig" }, 400);
+  if (!description) return c.json({ error: "Beschreibung fehlt oder ist ungültig" }, 400);
+  if (amountCents === undefined || amountCents === 0) return c.json({ error: "Betrag muss größer als 0 sein" }, 400);
+  if (!occurredOn) return c.json({ error: "Datum ist ungültig" }, 400);
+  const tournament = await db.getTournament(c.env.DB, tournamentId);
+  if (!tournament) return c.json({ error: "Turnier nicht gefunden" }, 404);
+  if (!canAccessJugend(c.get("role"), c.get("jugendIds"), tournament.jugendId)) return forbiddenJugend(c);
+  if (tournament.type !== "home") return c.json({ error: "Buchungen sind nur bei Heimveranstaltungen möglich" }, 400);
+  return c.json(
+    await db.createCashTransaction(c.env.DB, { tournamentId, kind, category, description, amountCents, occurredOn }),
+    201
+  );
+});
+
+// Prüft die Berechtigung für eine bestehende Buchung: allgemeine Buchungen
+// (tournamentId === null, z.B. Anschaffung von Sportgeräten) sind Admin-
+// Sache, turniergebundene folgen der üblichen Jugend-Berechtigung.
+async function assertCashTransactionAccess(c: Context<AppEnv>, transaction: { tournamentId: string | null }) {
+  if (transaction.tournamentId === null) {
+    return c.get("role") === "admin" ? null : c.json({ error: "Nur für Admins" }, 403);
+  }
+  const tournament = await db.getTournament(c.env.DB, transaction.tournamentId);
+  if (!tournament) return c.json({ error: "Turnier nicht gefunden" }, 404);
+  if (!canAccessJugend(c.get("role"), c.get("jugendIds"), tournament.jugendId)) return forbiddenJugend(c);
+  return null;
+}
+
+app.put("/api/cash-transactions/:id", requireAuth, async (c) => {
+  const id = validId(c.req.param("id"));
+  const body = await c.req.json().catch(() => null);
+  const kind = validEnum(body?.kind, CASH_TRANSACTION_KIND);
+  const category = validEnum(body?.category, CASH_TRANSACTION_CATEGORY);
+  const description = requiredText(body?.description, 150);
+  const amountCents = validCount(body?.amountCents);
+  const occurredOn = validDate(body?.occurredOn);
+  if (!id) return c.json({ error: "Ungültige ID" }, 400);
+  if (!kind || !category || !description || amountCents === undefined || amountCents === 0 || !occurredOn) {
+    return c.json({ error: "Buchung ist unvollständig oder ungültig" }, 400);
+  }
+  const transaction = await db.getCashTransaction(c.env.DB, id);
+  if (!transaction) return c.json({ error: "Buchung nicht gefunden" }, 404);
+  const denied = await assertCashTransactionAccess(c, transaction);
+  if (denied) return denied;
+  return c.json(await db.updateCashTransaction(c.env.DB, id, { kind, category, description, amountCents, occurredOn }));
+});
+
+app.delete("/api/cash-transactions/:id", requireAuth, async (c) => {
+  const id = validId(c.req.param("id"));
+  if (!id) return c.json({ error: "Ungültige ID" }, 400);
+  const transaction = await db.getCashTransaction(c.env.DB, id);
+  if (!transaction) return c.json({ error: "Buchung nicht gefunden" }, 404);
+  const denied = await assertCashTransactionAccess(c, transaction);
+  if (denied) return denied;
+  await db.deleteCashTransaction(c.env.DB, id);
+  return c.body(null, 204);
+});
+
+// --- Kassenbuch (vereinsweit) --------------------------------------------------
+// Gesamtübersicht über alle Turnier-Kassen plus allgemeine, nicht
+// turniergebundene Buchungen (z.B. Anschaffung von Sportgeräten). Trainer
+// sehen nur die Turnier-Kassen ihrer Jugend(en); die allgemeine, vereinsweite
+// Kasse ist Admins vorbehalten.
+app.get("/api/cash/book", requireAuth, async (c) => {
+  const book = await db.getClubCashBook(c.env.DB);
+  const role = c.get("role");
+  const allowed = c.get("jugendIds");
+  const tournamentBoxes =
+    role === "admin" ? book.tournamentBoxes : book.tournamentBoxes.filter((b) => canAccessJugend(role, allowed, b.jugendId));
+  if (role === "admin") {
+    return c.json({ ...book, tournamentBoxes });
+  }
+  return c.json({
+    tournamentBoxes,
+    generalTransactions: [],
+    generalIncomeCents: 0,
+    generalExpenseCents: 0,
+    generalBalanceCents: 0,
+    totalBalanceCents: tournamentBoxes.reduce((sum, b) => sum + b.currentBalanceCents, 0),
+  });
+});
+
+app.post("/api/cash/general", requireAuth, requireAdmin, async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const kind = validEnum(body?.kind, CASH_TRANSACTION_KIND);
+  const category = validEnum(body?.category, CASH_TRANSACTION_CATEGORY);
+  const description = requiredText(body?.description, 150);
+  const amountCents = validCount(body?.amountCents);
+  const occurredOn = validDate(body?.occurredOn);
+  if (!kind) return c.json({ error: "Buchungsart ist ungültig" }, 400);
+  if (!category) return c.json({ error: "Kategorie ist ungültig" }, 400);
+  if (!description) return c.json({ error: "Beschreibung fehlt oder ist ungültig" }, 400);
+  if (amountCents === undefined || amountCents === 0) return c.json({ error: "Betrag muss größer als 0 sein" }, 400);
+  if (!occurredOn) return c.json({ error: "Datum ist ungültig" }, 400);
+
+  return c.json(
+    await db.createCashTransaction(c.env.DB, {
+      tournamentId: null,
+      kind,
+      category,
+      description,
+      amountCents,
+      occurredOn,
+    }),
+    201
+  );
 });
 
 app.post("/api/tournaments/:id/auto-assign", requireAuth, async (c) => {

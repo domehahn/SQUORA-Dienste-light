@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { api } from "../../lib/api";
 import { useAuth } from "../../context/useAuth";
-import { inventoryLevel, type InventoryItem, type InventoryLevel } from "../../lib/types";
-import { FloatingInput } from "../../components/FloatingField";
+import { inventoryLevel, type InventoryItem, type InventoryLevel, type Jugend } from "../../lib/types";
+import { FloatingInput, FloatingSelect } from "../../components/FloatingField";
 
 const LEVEL_BADGE_CLASSES: Record<InventoryLevel, string> = {
   low: "bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300",
@@ -16,11 +16,12 @@ const LEVEL_LABELS: Record<InventoryLevel, string> = {
   ok: "Bestand ok",
 };
 
-const EMPTY = { name: "", unit: "", quantity: "0", minQuantity: "0", maxQuantity: "", note: "" };
+const EMPTY = { name: "", unit: "", quantity: "0", minQuantity: "0", maxQuantity: "", note: "", jugendId: "" };
 
 export default function Inventory() {
   const { isAdmin } = useAuth();
   const [items, setItems] = useState<InventoryItem[]>([]);
+  const [jugenden, setJugenden] = useState<Jugend[]>([]);
   const [form, setForm] = useState(EMPTY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -29,7 +30,15 @@ export default function Inventory() {
   async function load() {
     setLoading(true);
     try {
-      setItems(await api.get<InventoryItem[]>("/api/inventory"));
+      const [inventoryItems, availableJugenden] = await Promise.all([
+        api.get<InventoryItem[]>("/api/inventory"),
+        api.get<Jugend[]>("/api/jugenden"),
+      ]);
+      setItems(inventoryItems);
+      setJugenden(availableJugenden);
+      if (!isAdmin && availableJugenden.length === 1) {
+        setForm((current) => current.jugendId ? current : { ...current, jugendId: availableJugenden[0].id });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Fehler beim Laden");
     } finally {
@@ -50,12 +59,13 @@ export default function Inventory() {
       minQuantity: String(item.minQuantity),
       maxQuantity: item.maxQuantity != null ? String(item.maxQuantity) : "",
       note: item.note ?? "",
+      jugendId: item.jugendId ?? "",
     });
   }
 
   function resetForm() {
     setEditingId(null);
-    setForm(EMPTY);
+    setForm({ ...EMPTY, jugendId: !isAdmin && jugenden.length === 1 ? jugenden[0].id : "" });
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -69,6 +79,7 @@ export default function Inventory() {
         minQuantity: Number(form.minQuantity),
         maxQuantity: form.maxQuantity === "" ? null : Number(form.maxQuantity),
         note: form.note || null,
+        jugendId: form.jugendId || null,
         sortOrder: 0,
       };
       if (editingId) await api.put(`/api/inventory/${editingId}`, payload);
@@ -95,13 +106,12 @@ export default function Inventory() {
       <div>
         <h2 className="text-xl font-semibold text-slate-900 dark:text-slate-100">Lagerbestand</h2>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Vorräte für Grillen, Getränke & Co. Bei Unterschreitung des Mindestbestands (oder Überschreitung des
-          optionalen Maximalbestands) erscheint ein Hinweis.
+          Vorräte je Jugend für Grillgut, Getränke, Becher, Servietten, Besteck, Gasflaschen & Co. Bei
+          Unterschreitung des Mindestbestands erscheint ein Hinweis.
         </p>
       </div>
 
-      {isAdmin && (
-        <form
+      <form
           onSubmit={handleSubmit}
           className="grid grid-cols-1 gap-3 rounded-lg border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-2 lg:grid-cols-4"
         >
@@ -113,6 +123,17 @@ export default function Inventory() {
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
           </div>
+          <FloatingSelect
+            label="Jugend"
+            required={!isAdmin}
+            value={form.jugendId}
+            onChange={(e) => setForm((f) => ({ ...f, jugendId: e.target.value }))}
+          >
+            <option value="">{isAdmin ? "Vereinslager (ohne Jugend)" : "– Jugend auswählen –"}</option>
+            {jugenden.map((jugend) => (
+              <option key={jugend.id} value={jugend.id}>{jugend.name}</option>
+            ))}
+          </FloatingSelect>
           <FloatingInput
             label="Einheit (optional, z.B. Stück, Kisten)"
             value={form.unit}
@@ -166,7 +187,6 @@ export default function Inventory() {
             )}
           </div>
         </form>
-      )}
 
       {error && <p className="text-sm text-red-600 dark:text-red-400">Fehler: {error}</p>}
       {loading ? (
@@ -177,11 +197,12 @@ export default function Inventory() {
             <thead className="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
               <tr>
                 <th className="px-4 py-2 font-medium">Artikel</th>
+                <th className="px-4 py-2 font-medium">Jugend</th>
                 <th className="px-4 py-2 font-medium">Bestand</th>
                 <th className="px-4 py-2 font-medium">Mindest-/Maximalbestand</th>
                 <th className="px-4 py-2 font-medium">Status</th>
                 <th className="px-4 py-2 font-medium">Hinweis</th>
-                {isAdmin && <th className="px-4 py-2 font-medium"></th>}
+                <th className="px-4 py-2 font-medium"></th>
               </tr>
             </thead>
             <tbody>
@@ -190,6 +211,7 @@ export default function Inventory() {
                 return (
                   <tr key={item.id} className="border-t border-slate-100 dark:border-slate-800">
                     <td className="px-4 py-2 font-medium text-slate-800 dark:text-slate-100">{item.name}</td>
+                    <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{item.jugendName ?? "Vereinslager"}</td>
                     <td className="px-4 py-2 text-slate-600 dark:text-slate-300">
                       {item.quantity}
                       {item.unit ? ` ${item.unit}` : ""}
@@ -204,8 +226,7 @@ export default function Inventory() {
                       </span>
                     </td>
                     <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{item.note ?? "–"}</td>
-                    {isAdmin && (
-                      <td className="px-4 py-2 text-right">
+                    <td className="px-4 py-2 text-right">
                         <button
                           onClick={() => startEdit(item)}
                           className="mr-3 text-sm text-blue-700 hover:underline dark:text-blue-400"
@@ -218,14 +239,13 @@ export default function Inventory() {
                         >
                           Löschen
                         </button>
-                      </td>
-                    )}
+                    </td>
                   </tr>
                 );
               })}
               {items.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-slate-400 dark:text-slate-500">
+                  <td colSpan={7} className="px-4 py-6 text-center text-slate-400 dark:text-slate-500">
                     Noch keine Artikel angelegt.
                   </td>
                 </tr>

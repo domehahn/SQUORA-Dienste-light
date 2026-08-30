@@ -257,6 +257,15 @@ export default function TournamentDetail() {
       {error && <p className="text-sm text-red-600 dark:text-red-400 print:hidden">Fehler: {error}</p>}
       {info && <p className="text-sm text-blue-700 dark:text-blue-400 print:hidden">{info}</p>}
 
+      {tournament.type === "home" && (
+        <Link
+          to={`/admin/kasse?turnier=${tournament.id}`}
+          className="inline-flex items-center gap-1 text-sm text-blue-700 hover:underline dark:text-blue-400 print:hidden"
+        >
+          💶 Kasse für dieses Turnier öffnen →
+        </Link>
+      )}
+
       {/* Nur beim Drucken sichtbar: schlanke, reine Liste ohne Formulare/
           Steuerelemente - genau das, was am Turnier ausgehängt werden soll. */}
       {tournament.slots.length > 0 && (

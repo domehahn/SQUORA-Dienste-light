@@ -13,6 +13,8 @@ import TournamentDetail from "./pages/admin/TournamentDetail";
 import Overview from "./pages/admin/Overview";
 import Users from "./pages/admin/Users";
 import Inventory from "./pages/admin/Inventory";
+import Kasse from "./pages/admin/Kasse";
+import Kassenbuch from "./pages/admin/Kassenbuch";
 
 export default function App() {
   return (
@@ -29,6 +31,8 @@ export default function App() {
               <Route path="spieler" element={<Players />} />
               <Route path="turniere" element={<Tournaments />} />
               <Route path="turniere/:id" element={<TournamentDetail />} />
+              <Route path="kasse" element={<Kasse />} />
+              <Route path="kassenbuch" element={<Kassenbuch />} />
               <Route path="eltern" element={<Parents />} />
               <Route path="eltern/:id" element={<ParentDetail />} />
               <Route path="dienste" element={<DutyTypes />} />
