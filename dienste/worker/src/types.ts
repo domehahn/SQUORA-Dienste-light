@@ -72,6 +72,11 @@ export interface CashTransaction {
   description: string;
   amountCents: number;
   occurredOn: string;
+  // Optionale Verknüpfung mit einem Lagerartikel: Ausgaben (Einkauf) erhöhen
+  // dessen Bestand um "quantity", Einnahmen (Verkauf) verringern ihn.
+  inventoryItemId: string | null;
+  inventoryItemName: string | null;
+  quantity: number | null;
   createdAt: string;
 }
 
@@ -83,6 +88,9 @@ export interface CashTransactionRow {
   description: string;
   amount_cents: number;
   occurred_on: string;
+  inventory_item_id: string | null;
+  inventory_item_name: string | null;
+  quantity: number | null;
   created_at: string;
 }
 

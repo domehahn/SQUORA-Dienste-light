@@ -3,7 +3,13 @@ import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useAuth } from "../../context/useAuth";
 import { CASH_CATEGORY_LABELS, eurosToCents, formatMoney } from "../../lib/cash";
-import type { CashTransaction, CashTransactionCategory, CashTransactionKind, ClubCashBook } from "../../lib/types";
+import type {
+  CashTransaction,
+  CashTransactionCategory,
+  CashTransactionKind,
+  ClubCashBook,
+  InventoryItem,
+} from "../../lib/types";
 import { FloatingInput, FloatingSelect } from "../../components/FloatingField";
 
 function formatDate(iso: string): string {
@@ -17,11 +23,14 @@ const EMPTY = {
   description: "",
   amount: "",
   occurredOn: new Date().toISOString().slice(0, 10),
+  inventoryItemId: "",
+  quantity: "",
 };
 
 export default function Kassenbuch() {
   const { isAdmin } = useAuth();
   const [book, setBook] = useState<ClubCashBook | null>(null);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [form, setForm] = useState(EMPTY);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -30,7 +39,12 @@ export default function Kassenbuch() {
   async function load() {
     setLoading(true);
     try {
-      setBook(await api.get<ClubCashBook>("/api/cash/book"));
+      const [b, items] = await Promise.all([
+        api.get<ClubCashBook>("/api/cash/book"),
+        api.get<InventoryItem[]>("/api/inventory"),
+      ]);
+      setBook(b);
+      setInventoryItems(items);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Fehler beim Laden");
     } finally {
@@ -55,6 +69,8 @@ export default function Kassenbuch() {
       description: t.description,
       amount: (t.amountCents / 100).toFixed(2).replace(".", ","),
       occurredOn: t.occurredOn,
+      inventoryItemId: t.inventoryItemId ?? "",
+      quantity: t.quantity != null ? String(t.quantity) : "",
     });
   }
 
@@ -66,7 +82,15 @@ export default function Kassenbuch() {
       return;
     }
     setError(null);
-    const payload = { kind: form.kind, category: form.category, description: form.description, amountCents, occurredOn: form.occurredOn };
+    const payload = {
+      kind: form.kind,
+      category: form.category,
+      description: form.description,
+      amountCents,
+      occurredOn: form.occurredOn,
+      inventoryItemId: form.inventoryItemId || null,
+      quantity: form.inventoryItemId && form.quantity ? Number(form.quantity) : null,
+    };
     try {
       if (editingId) await api.put(`/api/cash-transactions/${editingId}`, payload);
       else await api.post("/api/cash/general", payload);
@@ -221,6 +245,28 @@ export default function Kassenbuch() {
                   value={form.occurredOn}
                   onChange={(e) => setForm((f) => ({ ...f, occurredOn: e.target.value }))}
                 />
+                <FloatingSelect
+                  label="Lagerartikel (optional)"
+                  value={form.inventoryItemId}
+                  onChange={(e) => setForm((f) => ({ ...f, inventoryItemId: e.target.value }))}
+                >
+                  <option value="">– keiner –</option>
+                  {inventoryItems.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                      {item.unit ? ` (${item.unit})` : ""}
+                    </option>
+                  ))}
+                </FloatingSelect>
+                {form.inventoryItemId && (
+                  <FloatingInput
+                    label="Menge"
+                    type="number"
+                    min={0}
+                    value={form.quantity}
+                    onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))}
+                  />
+                )}
                 <div className="flex gap-2 sm:col-span-2 lg:col-span-5">
                   <button
                     type="submit"
@@ -255,7 +301,14 @@ export default function Kassenbuch() {
                     {book.generalTransactions.map((t) => (
                       <tr key={t.id} className="border-t border-slate-100 dark:border-slate-800">
                         <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{formatDate(t.occurredOn)}</td>
-                        <td className="px-4 py-2 text-slate-800 dark:text-slate-100">{t.description}</td>
+                        <td className="px-4 py-2 text-slate-800 dark:text-slate-100">
+                          {t.description}
+                          {t.inventoryItemName && t.quantity != null && (
+                            <span className="ml-1 text-xs text-slate-500 dark:text-slate-400">
+                              ({t.quantity}x {t.inventoryItemName})
+                            </span>
+                          )}
+                        </td>
                         <td className="px-4 py-2 text-slate-600 dark:text-slate-300">{CASH_CATEGORY_LABELS[t.category]}</td>
                         <td
                           className={`px-4 py-2 text-right font-medium ${

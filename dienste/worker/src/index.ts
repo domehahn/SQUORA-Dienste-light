@@ -608,6 +608,17 @@ app.put("/api/tournaments/:id/cash/opening-balance", requireAuth, async (c) => {
   return c.json(await db.setTournamentOpeningBalance(c.env.DB, id, openingBalanceCents));
 });
 
+// Falls eine Buchung mit einem Lagerartikel verknüpft ist: prüft, dass er
+// existiert und für die aktuelle Rolle/Jugend zugänglich ist. Ohne Artikel
+// (null) ist nichts zu prüfen - die Verknüpfung ist immer optional.
+async function checkInventoryLinkAccess(c: Context<AppEnv>, inventoryItemId: string | null) {
+  if (!inventoryItemId) return null;
+  const item = await db.getInventoryItem(c.env.DB, inventoryItemId);
+  if (!item) return c.json({ error: "Lagerartikel nicht gefunden" }, 404);
+  if (!canAccessJugend(c.get("role"), c.get("jugendIds"), item.jugendId)) return forbiddenJugend(c);
+  return null;
+}
+
 app.post("/api/tournaments/:id/cash/transactions", requireAuth, async (c) => {
   const tournamentId = validId(c.req.param("id"));
   const body = await c.req.json().catch(() => null);
@@ -616,18 +627,33 @@ app.post("/api/tournaments/:id/cash/transactions", requireAuth, async (c) => {
   const description = requiredText(body?.description, 150);
   const amountCents = validCount(body?.amountCents);
   const occurredOn = validDate(body?.occurredOn);
+  const inventoryItemId = optionalId(body?.inventoryItemId);
+  const quantity = validOptionalCount(body?.quantity);
   if (!tournamentId) return c.json({ error: "Ungültige ID" }, 400);
   if (!kind) return c.json({ error: "Buchungsart ist ungültig" }, 400);
   if (!category) return c.json({ error: "Kategorie ist ungültig" }, 400);
   if (!description) return c.json({ error: "Beschreibung fehlt oder ist ungültig" }, 400);
   if (amountCents === undefined || amountCents === 0) return c.json({ error: "Betrag muss größer als 0 sein" }, 400);
   if (!occurredOn) return c.json({ error: "Datum ist ungültig" }, 400);
+  if (inventoryItemId === undefined) return c.json({ error: "Lagerartikel ist ungültig" }, 400);
+  if (quantity === undefined) return c.json({ error: "Menge ist ungültig" }, 400);
   const tournament = await db.getTournament(c.env.DB, tournamentId);
   if (!tournament) return c.json({ error: "Turnier nicht gefunden" }, 404);
   if (!canAccessJugend(c.get("role"), c.get("jugendIds"), tournament.jugendId)) return forbiddenJugend(c);
   if (tournament.type !== "home") return c.json({ error: "Buchungen sind nur bei Heimveranstaltungen möglich" }, 400);
+  const linkDenied = await checkInventoryLinkAccess(c, inventoryItemId);
+  if (linkDenied) return linkDenied;
   return c.json(
-    await db.createCashTransaction(c.env.DB, { tournamentId, kind, category, description, amountCents, occurredOn }),
+    await db.createCashTransaction(c.env.DB, {
+      tournamentId,
+      kind,
+      category,
+      description,
+      amountCents,
+      occurredOn,
+      inventoryItemId,
+      quantity,
+    }),
     201
   );
 });
@@ -653,15 +679,31 @@ app.put("/api/cash-transactions/:id", requireAuth, async (c) => {
   const description = requiredText(body?.description, 150);
   const amountCents = validCount(body?.amountCents);
   const occurredOn = validDate(body?.occurredOn);
+  const inventoryItemId = optionalId(body?.inventoryItemId);
+  const quantity = validOptionalCount(body?.quantity);
   if (!id) return c.json({ error: "Ungültige ID" }, 400);
   if (!kind || !category || !description || amountCents === undefined || amountCents === 0 || !occurredOn) {
     return c.json({ error: "Buchung ist unvollständig oder ungültig" }, 400);
   }
+  if (inventoryItemId === undefined) return c.json({ error: "Lagerartikel ist ungültig" }, 400);
+  if (quantity === undefined) return c.json({ error: "Menge ist ungültig" }, 400);
   const transaction = await db.getCashTransaction(c.env.DB, id);
   if (!transaction) return c.json({ error: "Buchung nicht gefunden" }, 404);
   const denied = await assertCashTransactionAccess(c, transaction);
   if (denied) return denied;
-  return c.json(await db.updateCashTransaction(c.env.DB, id, { kind, category, description, amountCents, occurredOn }));
+  const linkDenied = await checkInventoryLinkAccess(c, inventoryItemId);
+  if (linkDenied) return linkDenied;
+  return c.json(
+    await db.updateCashTransaction(c.env.DB, id, {
+      kind,
+      category,
+      description,
+      amountCents,
+      occurredOn,
+      inventoryItemId,
+      quantity,
+    })
+  );
 });
 
 app.delete("/api/cash-transactions/:id", requireAuth, async (c) => {
@@ -706,11 +748,17 @@ app.post("/api/cash/general", requireAuth, requireAdmin, async (c) => {
   const description = requiredText(body?.description, 150);
   const amountCents = validCount(body?.amountCents);
   const occurredOn = validDate(body?.occurredOn);
+  const inventoryItemId = optionalId(body?.inventoryItemId);
+  const quantity = validOptionalCount(body?.quantity);
   if (!kind) return c.json({ error: "Buchungsart ist ungültig" }, 400);
   if (!category) return c.json({ error: "Kategorie ist ungültig" }, 400);
   if (!description) return c.json({ error: "Beschreibung fehlt oder ist ungültig" }, 400);
   if (amountCents === undefined || amountCents === 0) return c.json({ error: "Betrag muss größer als 0 sein" }, 400);
   if (!occurredOn) return c.json({ error: "Datum ist ungültig" }, 400);
+  if (inventoryItemId === undefined) return c.json({ error: "Lagerartikel ist ungültig" }, 400);
+  if (quantity === undefined) return c.json({ error: "Menge ist ungültig" }, 400);
+  const linkDenied = await checkInventoryLinkAccess(c, inventoryItemId);
+  if (linkDenied) return linkDenied;
 
   return c.json(
     await db.createCashTransaction(c.env.DB, {
@@ -720,6 +768,8 @@ app.post("/api/cash/general", requireAuth, requireAdmin, async (c) => {
       description,
       amountCents,
       occurredOn,
+      inventoryItemId,
+      quantity,
     }),
     201
   );

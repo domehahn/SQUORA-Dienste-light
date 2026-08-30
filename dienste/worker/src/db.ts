@@ -68,9 +68,26 @@ function rowToCashTransaction(row: CashTransactionRow): CashTransaction {
     description: row.description,
     amountCents: row.amount_cents,
     occurredOn: row.occurred_on,
+    inventoryItemId: row.inventory_item_id,
+    inventoryItemName: row.inventory_item_name,
+    quantity: row.quantity,
     createdAt: row.created_at,
   };
 }
+
+// Ausgaben (Einkauf, z.B. 20 Bratwürste) erhöhen den verknüpften
+// Lagerbestand, Einnahmen (Verkauf) verringern ihn - dieselbe Menge, nur mit
+// umgekehrtem Vorzeichen je nach Buchungsart.
+function inventoryDelta(kind: "income" | "expense", quantity: number): number {
+  return kind === "expense" ? quantity : -quantity;
+}
+
+async function applyInventoryDelta(db: D1Database, itemId: string | null, delta: number): Promise<void> {
+  if (!itemId || delta === 0) return;
+  await db.prepare("UPDATE inventory_items SET quantity = quantity + ? WHERE id = ?").bind(delta, itemId).run();
+}
+
+const CASH_TRANSACTION_SELECT = `SELECT ct.*, ii.name as inventory_item_name FROM cash_transactions ct LEFT JOIN inventory_items ii ON ii.id = ct.inventory_item_id`;
 
 function playerFullName(firstName: string | null, lastName: string | null): string | null {
   return firstName && lastName ? `${firstName} ${lastName}` : null;
@@ -388,9 +405,7 @@ export async function getTournamentCashBox(db: D1Database, tournamentId: string)
       .bind(tournamentId)
       .first<{ opening_balance_cents: number; income_cents: number; expense_cents: number }>(),
     db
-      .prepare(
-        "SELECT * FROM cash_transactions WHERE tournament_id = ? ORDER BY occurred_on DESC, created_at DESC"
-      )
+      .prepare(`${CASH_TRANSACTION_SELECT} WHERE ct.tournament_id = ? ORDER BY ct.occurred_on DESC, ct.created_at DESC`)
       .bind(tournamentId)
       .all<CashTransactionRow>(),
   ]);
@@ -458,7 +473,7 @@ export async function getClubCashBook(db: D1Database): Promise<ClubCashBook> {
         expense_cents: number;
       }>(),
     db
-      .prepare("SELECT * FROM cash_transactions WHERE tournament_id IS NULL ORDER BY occurred_on DESC, created_at DESC")
+      .prepare(`${CASH_TRANSACTION_SELECT} WHERE ct.tournament_id IS NULL ORDER BY ct.occurred_on DESC, ct.created_at DESC`)
       .all<CashTransactionRow>(),
   ]);
 
@@ -493,39 +508,77 @@ export async function getClubCashBook(db: D1Database): Promise<ClubCashBook> {
 
 export async function createCashTransaction(
   db: D1Database,
-  input: Omit<CashTransaction, "id" | "createdAt">
+  input: Omit<CashTransaction, "id" | "inventoryItemName" | "createdAt">
 ): Promise<CashTransaction> {
   const id = crypto.randomUUID();
   await db
     .prepare(
-      "INSERT INTO cash_transactions (id, tournament_id, kind, category, description, amount_cents, occurred_on) VALUES (?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO cash_transactions (id, tournament_id, kind, category, description, amount_cents, occurred_on, inventory_item_id, quantity) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     )
-    .bind(id, input.tournamentId, input.kind, input.category, input.description, input.amountCents, input.occurredOn)
+    .bind(
+      id,
+      input.tournamentId,
+      input.kind,
+      input.category,
+      input.description,
+      input.amountCents,
+      input.occurredOn,
+      input.inventoryItemId,
+      input.quantity
+    )
     .run();
-  const row = await db.prepare("SELECT * FROM cash_transactions WHERE id = ?").bind(id).first<CashTransactionRow>();
+  if (input.inventoryItemId && input.quantity) {
+    await applyInventoryDelta(db, input.inventoryItemId, inventoryDelta(input.kind, input.quantity));
+  }
+  const row = await db.prepare(`${CASH_TRANSACTION_SELECT} WHERE ct.id = ?`).bind(id).first<CashTransactionRow>();
   return rowToCashTransaction(row as CashTransactionRow);
 }
 
 export async function getCashTransaction(db: D1Database, id: string): Promise<CashTransaction | null> {
-  const row = await db.prepare("SELECT * FROM cash_transactions WHERE id = ?").bind(id).first<CashTransactionRow>();
+  const row = await db.prepare(`${CASH_TRANSACTION_SELECT} WHERE ct.id = ?`).bind(id).first<CashTransactionRow>();
   return row ? rowToCashTransaction(row) : null;
 }
 
 export async function updateCashTransaction(
   db: D1Database,
   id: string,
-  input: Omit<CashTransaction, "id" | "tournamentId" | "createdAt">
+  input: Omit<CashTransaction, "id" | "tournamentId" | "inventoryItemName" | "createdAt">
 ): Promise<CashTransaction | null> {
+  // Vorherige Bestandswirkung dieser Buchung zurücknehmen, bevor die neue
+  // angewendet wird - sonst würde beim Ändern von Menge/Artikel/Buchungsart
+  // der Lagerbestand doppelt oder falsch verrechnet.
+  const previous = await getCashTransaction(db, id);
+  if (previous?.inventoryItemId && previous.quantity) {
+    await applyInventoryDelta(db, previous.inventoryItemId, -inventoryDelta(previous.kind, previous.quantity));
+  }
+
   await db
     .prepare(
-      "UPDATE cash_transactions SET kind = ?, category = ?, description = ?, amount_cents = ?, occurred_on = ? WHERE id = ?"
+      "UPDATE cash_transactions SET kind = ?, category = ?, description = ?, amount_cents = ?, occurred_on = ?, inventory_item_id = ?, quantity = ? WHERE id = ?"
     )
-    .bind(input.kind, input.category, input.description, input.amountCents, input.occurredOn, id)
+    .bind(
+      input.kind,
+      input.category,
+      input.description,
+      input.amountCents,
+      input.occurredOn,
+      input.inventoryItemId,
+      input.quantity,
+      id
+    )
     .run();
+
+  if (input.inventoryItemId && input.quantity) {
+    await applyInventoryDelta(db, input.inventoryItemId, inventoryDelta(input.kind, input.quantity));
+  }
   return getCashTransaction(db, id);
 }
 
 export async function deleteCashTransaction(db: D1Database, id: string): Promise<void> {
+  const existing = await getCashTransaction(db, id);
+  if (existing?.inventoryItemId && existing.quantity) {
+    await applyInventoryDelta(db, existing.inventoryItemId, -inventoryDelta(existing.kind, existing.quantity));
+  }
   await db.prepare("DELETE FROM cash_transactions WHERE id = ?").bind(id).run();
 }
 

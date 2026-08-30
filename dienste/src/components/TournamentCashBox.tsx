@@ -4,6 +4,7 @@ import type {
   CashTransaction,
   CashTransactionCategory,
   CashTransactionKind,
+  InventoryItem,
   TournamentCashBox as TournamentCashBoxData,
 } from "../lib/types";
 import { FloatingInput, FloatingSelect } from "./FloatingField";
@@ -15,10 +16,13 @@ const EMPTY_TRANSACTION = {
   description: "",
   amount: "",
   occurredOn: "",
+  inventoryItemId: "",
+  quantity: "",
 };
 
 export function TournamentCashBox({ tournamentId, eventDate }: { tournamentId: string; eventDate: string }) {
   const [cashBox, setCashBox] = useState<TournamentCashBoxData | null>(null);
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   const [openingBalance, setOpeningBalance] = useState("0,00");
   const [form, setForm] = useState({ ...EMPTY_TRANSACTION, occurredOn: eventDate });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -28,9 +32,13 @@ export function TournamentCashBox({ tournamentId, eventDate }: { tournamentId: s
   async function load() {
     setLoading(true);
     try {
-      const data = await api.get<TournamentCashBoxData>(`/api/tournaments/${tournamentId}/cash`);
-      setCashBox(data);
-      setOpeningBalance((data.openingBalanceCents / 100).toFixed(2).replace(".", ","));
+      const [cash, items] = await Promise.all([
+        api.get<TournamentCashBoxData>(`/api/tournaments/${tournamentId}/cash`),
+        api.get<InventoryItem[]>("/api/inventory"),
+      ]);
+      setCashBox(cash);
+      setInventoryItems(items);
+      setOpeningBalance((cash.openingBalanceCents / 100).toFixed(2).replace(".", ","));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Fehler beim Laden der Kasse");
     } finally {
@@ -73,6 +81,8 @@ export function TournamentCashBox({ tournamentId, eventDate }: { tournamentId: s
       description: transaction.description,
       amount: (transaction.amountCents / 100).toFixed(2).replace(".", ","),
       occurredOn: transaction.occurredOn,
+      inventoryItemId: transaction.inventoryItemId ?? "",
+      quantity: transaction.quantity != null ? String(transaction.quantity) : "",
     });
   }
 
@@ -90,6 +100,8 @@ export function TournamentCashBox({ tournamentId, eventDate }: { tournamentId: s
       description: form.description,
       amountCents,
       occurredOn: form.occurredOn,
+      inventoryItemId: form.inventoryItemId || null,
+      quantity: form.inventoryItemId && form.quantity ? Number(form.quantity) : null,
     };
     try {
       if (editingId) await api.put(`/api/cash-transactions/${editingId}`, payload);
@@ -118,7 +130,9 @@ export function TournamentCashBox({ tournamentId, eventDate }: { tournamentId: s
       <div className="mb-3">
         <h3 className="font-medium text-slate-900 dark:text-slate-100">Veranstaltungskasse</h3>
         <p className="text-sm text-slate-500 dark:text-slate-400">
-          Anfangsbestand, Verkaufseinnahmen und Einkäufe für dieses Heimspiel bzw. Heimturnier.
+          Anfangsbestand, Verkaufseinnahmen und Einkäufe für dieses Heimspiel bzw. Heimturnier. Bei Verknüpfung
+          mit einem Lagerartikel wird dessen Bestand automatisch angepasst: Ausgaben (Einkauf) erhöhen ihn,
+          Einnahmen (Verkauf) verringern ihn.
         </p>
       </div>
 
@@ -176,6 +190,28 @@ export function TournamentCashBox({ tournamentId, eventDate }: { tournamentId: s
             <FloatingInput label="Beschreibung" required value={form.description} onChange={(e) => setForm((current) => ({ ...current, description: e.target.value }))} />
             <FloatingInput label="Betrag in Euro" required inputMode="decimal" value={form.amount} onChange={(e) => setForm((current) => ({ ...current, amount: e.target.value }))} />
             <FloatingInput label="Datum" type="date" required value={form.occurredOn} onChange={(e) => setForm((current) => ({ ...current, occurredOn: e.target.value }))} />
+            <FloatingSelect
+              label="Lagerartikel (optional)"
+              value={form.inventoryItemId}
+              onChange={(e) => setForm((current) => ({ ...current, inventoryItemId: e.target.value }))}
+            >
+              <option value="">– keiner –</option>
+              {inventoryItems.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                  {item.unit ? ` (${item.unit})` : ""}
+                </option>
+              ))}
+            </FloatingSelect>
+            {form.inventoryItemId && (
+              <FloatingInput
+                label="Menge"
+                type="number"
+                min={0}
+                value={form.quantity}
+                onChange={(e) => setForm((current) => ({ ...current, quantity: e.target.value }))}
+              />
+            )}
             <div className="flex gap-2 sm:col-span-2 lg:col-span-5">
               <button type="submit" className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600">
                 {editingId ? "Änderung speichern" : "Buchung erfassen"}
@@ -193,7 +229,14 @@ export function TournamentCashBox({ tournamentId, eventDate }: { tournamentId: s
                 {cashBox.transactions.map((transaction) => (
                   <tr key={transaction.id} className="border-t border-slate-100 dark:border-slate-800">
                     <td className="py-2 pr-3 text-slate-500 dark:text-slate-400">{transaction.occurredOn.split("-").reverse().join(".")}</td>
-                    <td className="py-2 pr-3 text-slate-800 dark:text-slate-100">{transaction.description}</td>
+                    <td className="py-2 pr-3 text-slate-800 dark:text-slate-100">
+                      {transaction.description}
+                      {transaction.inventoryItemName && transaction.quantity != null && (
+                        <span className="ml-1 text-xs text-slate-500 dark:text-slate-400">
+                          ({transaction.quantity}x {transaction.inventoryItemName})
+                        </span>
+                      )}
+                    </td>
                     <td className="py-2 pr-3 text-slate-500 dark:text-slate-400">{CASH_CATEGORY_LABELS[transaction.category]}</td>
                     <td className={`py-2 pr-3 text-right font-medium ${transaction.kind === "income" ? "text-emerald-700 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                       {transaction.kind === "income" ? "+" : "−"}{formatMoney(transaction.amountCents)}
